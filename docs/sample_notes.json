@@ -1,0 +1,59 @@
+{
+ "built": "sample",
+ "notes": [
+  {
+   "id": "sample1",
+   "t": 1793920467991,
+   "est": false,
+   "title": "[샘플]",
+   "tf": "5m",
+   "mark": "고민",
+   "text": "[샘플] 노란 박스는 고민구간일까?\n두 번째 줄",
+   "comments": [
+    {
+     "at": "",
+     "text": "[Claude] 샘플 댓글입니다. 실제 기록이 아닙니다."
+    }
+   ],
+   "img": "icon-512.png",
+   "mime": "image/png"
+  },
+  {
+   "id": "sample2",
+   "t": 1793927667991,
+   "est": false,
+   "title": "[샘플]",
+   "tf": "5m",
+   "mark": "확신",
+   "text": "[샘플] 저점을 지키는 것 같다",
+   "comments": []
+  },
+  {
+   "id": "sample3",
+   "t": 1793927787991,
+   "est": true,
+   "title": "[샘플]",
+   "tf": "5m",
+   "mark": null,
+   "text": "[샘플] 같은 봉 근처 두 번째 기록",
+   "comments": [
+    {
+     "at": "",
+     "text": "[Claude] 샘플 댓글입니다. 실제 기록이 아닙니다."
+    }
+   ]
+  },
+  {
+   "id": "sample4",
+   "t": 1793936067991,
+   "est": false,
+   "title": "[샘플]",
+   "tf": "5m",
+   "mark": "포기",
+   "text": "[샘플] 여기서 포기",
+   "comments": [],
+   "img": "icon-512.png",
+   "mime": "image/png"
+  }
+ ]
+}
