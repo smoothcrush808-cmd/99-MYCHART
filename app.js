@@ -1519,6 +1519,8 @@ const sync = (() => {
 // 캡쳐는 data/img/{id}.bin = iv(12바이트) + 암호문 — 팝업을 열 때 그 한 장만 받아 푼다.
 const MARK_COL = { '도전': '#ff9800', '고민': '#ffeb3b', '포기': '#f23645', '확신': '#26e0a5' };
 const MARK_NONE = '#33d4ff';
+const SC_COL = { '대기': '#9aa4b2', '진입': '#3d8bff', '불참': '#ffcc33', '종료': '#26e0a5' }; // 시나리오 ◆ = 상태
+const isSc = n => n.kind === 'sc';
 const isPhone = () => window.matchMedia('(max-width: 720px)').matches || wide.isOn();
 const notes = (() => {
   let on = !!store.get(PREF_KEY, {}).notes;
@@ -1594,17 +1596,22 @@ const notes = (() => {
     hits = [];
     if (!on || !list.length || !S.bars.length) return;
     const k = isPhone() ? 1.3 : 1;
-    const y = h - Math.round(9 * k);
+    // 줄 둘: 아래 = MY 기록 ●, 그 위 = 시나리오 ◆
+    const rows = [{ y: h - Math.round(9 * k), sc: false }, { y: h - Math.round(26 * k), sc: true }];
     const groups = [];
-    for (const n of list) {
-      const x = timeToX(msToChart(n.t));
-      if (x == null || x < -6 || x > w + 6) continue;
-      const g = groups[groups.length - 1];
-      if (g && x - g.x0 < 10 * k) { g.items.push(n); g.x = (g.x0 + x) / 2; }
-      else groups.push({ x0: x, x, items: [n] });
+    for (const row of rows) {
+      let g = null;
+      for (const n of list) {
+        if (isSc(n) !== row.sc) continue;
+        const x = timeToX(msToChart(n.t));
+        if (x == null || x < -6 || x > w + 6) continue;
+        if (g && x - g.x0 < 10 * k) { g.items.push(n); g.x = (g.x0 + x) / 2; }
+        else { g = { x0: x, x, y: row.y, sc: row.sc, items: [n] }; groups.push(g); }
+      }
     }
     ctx.save();
     for (const g of groups) {
+      const y = g.y;
       const selN = g.items.find(n => n.id === selId);
       if (selN) { // 고른 기록의 시각에 옅은 세로 점선
         const x = Math.round(timeToX(msToChart(selN.t))) + 0.5;
@@ -1612,12 +1619,13 @@ const notes = (() => {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); ctx.setLineDash([]);
       }
       const many = g.items.length > 1;
-      const r = (many ? 6.5 : 4.5) * k;
       const last = g.items[g.items.length - 1];
-      ctx.fillStyle = MARK_COL[last.mark] || MARK_NONE;
-      ctx.beginPath(); ctx.arc(g.x, y, r, 0, Math.PI * 2); ctx.fill();
+      const shape = (rr) => { ctx.beginPath(); if (g.sc) { ctx.moveTo(g.x, y - rr); ctx.lineTo(g.x + rr, y); ctx.lineTo(g.x, y + rr); ctx.lineTo(g.x - rr, y); ctx.closePath(); } else ctx.arc(g.x, y, rr, 0, Math.PI * 2); };
+      const r = (many ? 6.5 : 4.5) * k * (g.sc ? 1.45 : 1);
+      ctx.fillStyle = g.sc ? (SC_COL[last.state] || SC_COL['대기']) : (MARK_COL[last.mark] || MARK_NONE);
+      shape(r); ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = selN ? '#ffffff' : 'rgba(10,14,20,0.9)';
-      ctx.beginPath(); ctx.arc(g.x, y, r + (selN ? 2 : 0.5), 0, Math.PI * 2); ctx.stroke();
+      shape(r + (selN ? 2 : 0.5)); ctx.stroke();
       if (many) {
         ctx.fillStyle = '#0a0e14';
         ctx.font = `700 ${Math.round(9 * k)}px 'IBM Plex Mono', Menlo, monospace`;
@@ -1643,7 +1651,7 @@ const notes = (() => {
     const tol = isPhone() ? 24 : 14;
     let best = null, bd = Infinity;
     for (const g of hits) {
-      const d = Math.hypot(g.x - x, (g.y - y) * 0.6);
+      const d = Math.hypot(g.x - x, (g.y - y) * 1.2);
       if (d < tol && d < bd) { bd = d; best = g; }
     }
     if (!best) return false;
@@ -1659,7 +1667,20 @@ const notes = (() => {
   function show(items) {
     shown = items;
     selId = items[items.length - 1].id;
-    $('noteBody').innerHTML = items.map(n => `
+    $('noteBody').innerHTML = items.map(n => isSc(n) ? `
+      <article class="nt">
+        <div class="nt-head">
+          <span class="nt-time">🎯 ${kst(n.t)}${n.est ? ' <em title="작성 시각이 비어 있어 노션 만든 시각">추정</em>' : ''}</span>
+          <span class="nt-mark" style="--mc:${SC_COL[n.state] || SC_COL['대기']}">${esc(n.state || '대기')}</span>
+          ${(n.dirs || []).map(d => `<span class="nt-tf sc-${d === '롱' ? 'long' : 'short'}">${esc(d)}</span>`).join('')}
+          ${(n.types || []).map(t => `<span class="nt-tf">${esc(t)}</span>`).join('')}
+          <span class="spacer"></span>
+          <button class="nt-go" data-go="${esc(n.id)}" title="이 시각을 차트 가운데로">이동</button>
+        </div>
+        <div class="nt-sc-title">${esc(n.title)}</div>
+        ${n.result ? `<div class="nt-result"><b>결과</b> ${esc(n.result)}</div>` : ''}
+        ${n.img ? `<div class="nt-img nt-card" data-img="${esc(n.id)}"><span>카드 여는 중…</span></div>` : '<div class="nt-text nt-empty">(카드 없음)</div>'}
+      </article>` : `
       <article class="nt">
         <div class="nt-head">
           <span class="nt-time">${kst(n.t)}${n.est ? ' <em title="차트 시각을 정확히 모름 — 제목 시각 또는 Claude 추정">추정</em>' : ''}</span>

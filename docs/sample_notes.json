@@ -44,6 +44,25 @@
    ]
   },
   {
+   "id": "sample_sc",
+   "kind": "sc",
+   "t": 1793931267991,
+   "est": false,
+   "title": "[샘플] 76,300 위 롱 / 75,300 아래 숏",
+   "state": "대기",
+   "dirs": [
+    "롱",
+    "숏"
+   ],
+   "types": [
+    "단타",
+    "스캘핑"
+   ],
+   "result": "",
+   "img": "icon-512.png",
+   "mime": "image/png"
+  },
+  {
    "id": "sample4",
    "t": 1793936067991,
    "est": false,

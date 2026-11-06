@@ -323,6 +323,13 @@
   .nt-img img { display:block; width:100%; height:auto; max-height:72vh; object-fit:contain; cursor:zoom-in; }
   .nt-text { margin-top:10px; font-size:15px; line-height:1.65; white-space:pre-wrap; word-break:keep-all; overflow-wrap:anywhere; }
   .nt-empty { color:var(--text-sub); font-size:13px; }
+  .nt-sc-title { font-size:15px; font-weight:600; margin-bottom:8px; }
+  .nt-result { font-size:14px; line-height:1.6; margin-bottom:8px; padding:6px 10px; border-left:3px solid var(--accel); background:rgba(51,212,255,0.06); border-radius:0 6px 6px 0; }
+  .nt-result b { color:var(--accel); margin-right:6px; }
+  .nt-tf.sc-long { color:#26e0a5; border-color:rgba(38,224,165,0.5); }
+  .nt-tf.sc-short { color:#f23645; border-color:rgba(242,54,69,0.5); }
+  .nt-card img, #noteSheet.sheet .nt-card img { max-height:none; }
+  #noteSheet .panel:has(.nt-card) { max-width:min(600px, 94vw); }
   .nt-cm { margin-top:10px; font-size:13px; color:var(--text-dim); }
   .nt-cm summary { cursor:pointer; color:var(--text-sub); font-size:12px; }
   .nt-cm p { margin-top:6px; line-height:1.6; white-space:pre-wrap; padding-left:8px; border-left:2px solid var(--border2); }
@@ -526,6 +533,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- 고칠 때마다 v를 올린다: 배포 직후 브라우저가 옛 app.js를 쓰지 않도록 -->
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

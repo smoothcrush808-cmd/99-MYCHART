@@ -93,14 +93,16 @@ def note_time(p: dict) -> tuple[int, bool]:
     return int(created.timestamp() * 1000), True
 
 
-def to_webp(path: Path) -> bytes:
+def to_webp(path: Path, max_w: int | None = None) -> bytes:
+    """max_w 없으면 긴 변 1600px. 시나리오 카드는 세로로 길어서 폭만 1080px로 맞춘다(글자가 읽히게)."""
     im = Image.open(path)
     im.load()
     if im.mode not in ('RGB', 'RGBA'):
         im = im.convert('RGBA' if 'A' in im.getbands() else 'RGB')
     w, h = im.size
-    if max(w, h) > MAX_SIDE:
-        r = MAX_SIDE / max(w, h)
+    lim, side = (max_w, w) if max_w else (MAX_SIDE, max(w, h))
+    if side > lim:
+        r = lim / side
         im = im.resize((round(w * r), round(h * r)), Image.LANCZOS)
     out = io.BytesIO()
     im.save(out, 'WEBP', quality=80, method=6)
@@ -146,24 +148,42 @@ def main() -> None:
 
     img_dir.mkdir(parents=True, exist_ok=True)
     notes, keep, n_new = [], set(), 0
+
+    def attach(n: dict, rel: str | None, max_w: int | None = None) -> None:
+        nonlocal n_new
+        if not rel or not (a.src / rel).exists():
+            return
+        raw = (a.src / rel).read_bytes()
+        sha = hashlib.sha256(raw).hexdigest() + (f':w{max_w}' if max_w else '')
+        out = img_dir / f"{n['id']}.bin"
+        if built['imgs'].get(n['id']) != sha or not out.exists():
+            iv = os.urandom(12)
+            out.write_bytes(iv + aes.encrypt(iv, to_webp(a.src / rel, max_w), None))
+            built['imgs'][n['id']] = sha
+            n_new += 1
+        n['img'] = f"img/{n['id']}.bin"
+        n['mime'] = 'image/webp'
+        keep.add(out.name)
+
     for p in src['pages']:
         t, est = note_time(p)
         n = {'id': p['id'], 't': t, 'est': est, 'title': p.get('title') or '', 'tf': p.get('tf'),
              'mark': p.get('mark'), 'text': (p.get('text') or '').strip(),
              'comments': [c for c in p.get('comments') or [] if c.get('text')]}
-        if p.get('img') and (a.src / p['img']).exists():
-            raw = (a.src / p['img']).read_bytes()
-            sha = hashlib.sha256(raw).hexdigest()
-            out = img_dir / f"{p['id']}.bin"
-            if built['imgs'].get(p['id']) != sha or not out.exists():
-                iv = os.urandom(12)
-                out.write_bytes(iv + aes.encrypt(iv, to_webp(a.src / p['img']), None))
-                built['imgs'][p['id']] = sha
-                n_new += 1
-            n['img'] = f"img/{p['id']}.bin"
-            n['mime'] = 'image/webp'
-            keep.add(out.name)
+        attach(n, p.get('img'))
         notes.append(n)
+
+    # 시나리오 (노션 SCENARIO) — ◆ 점, 팝업은 라스트찬스 카드 한 장 + 상태·결과
+    sc_path = a.src / 'scenario.json'
+    n_sc = 0
+    for p in (json.loads(sc_path.read_text(encoding='utf-8'))['pages'] if sc_path.exists() else []):
+        ts = p.get('written') or p['created']
+        t = int(datetime.fromisoformat(ts.replace('Z', '+00:00')).timestamp() * 1000)
+        n = {'id': p['id'], 'kind': 'sc', 't': t, 'est': not p.get('written'), 'title': p.get('title') or '',
+             'state': p.get('state'), 'dirs': p.get('dirs') or [], 'types': p.get('types') or [],
+             'result': (p.get('result') or '').strip()}
+        attach(n, p.get('img'), 1080)
+        notes.append(n); n_sc += 1
     removed = 0
     for f in img_dir.glob('*.bin'):
         if f.name not in keep:
@@ -179,8 +199,8 @@ def main() -> None:
     enc_path.write_bytes(json.dumps(env).encode('utf-8'))
     built_path.write_bytes(json.dumps(built, ensure_ascii=False, indent=1).encode('utf-8'))
     size = sum(f.stat().st_size for f in img_dir.glob('*.bin'))
-    est = sum(1 for n in notes if n['est'])
-    print(f'기록 {len(notes)}개 (시각 추정 {est}) · 캡쳐 새로 {n_new} · 지움 {removed} · 캡쳐 합계 {size / 1e6:.1f}MB')
+    est = sum(1 for n in notes if n['est'] and n.get('kind') != 'sc')
+    print(f'기록 {len(notes) - n_sc}개 (시각 추정 {est}) · 시나리오 {n_sc} · 캡쳐 새로 {n_new} · 지움 {removed} · 캡쳐 합계 {size / 1e6:.1f}MB')
 
 
 if __name__ == '__main__':
