@@ -1723,7 +1723,7 @@ const notes = (() => {
     try {
       await unlockPw(pw, $('notesRemember').checked);
       closeModal($('notesLock'));
-      toast(`내 기록 ${list.length}개를 열었습니다`);
+      toast(`MY 기록 ${list.length}개를 열었습니다`);
     } catch (e) {
       toast(e.name === 'OperationError' ? '비밀번호가 맞지 않습니다' : '열지 못했습니다', { error: true, detail: e.name === 'OperationError' ? '' : e.message });
     } finally { $('notesOk').disabled = false; $('notesOk').textContent = '열기'; $('notesPw').value = ''; }
