@@ -44,7 +44,7 @@
     --safe-l: env(safe-area-inset-left, 0px);
   }
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { height:100%; overflow:hidden; }
+  html, body { height:100%; height:var(--vh, 100%); overflow:hidden; } /* 앱 높이와 같이 (홈 화면 앱에서 잘리지 않게) */
   body {
     background: var(--bg);
     color: var(--text);
@@ -55,6 +55,8 @@
 
   .app {
     height:100vh; height:100dvh;
+    /* 아이폰 홈 화면 앱은 100dvh가 상태바 높이만큼 짧아 아래가 빈다 → 실제 창 높이(JS가 넣음)로 */
+    height:var(--vh, 100dvh);
     display:grid;
     grid-template-columns: 60px 1fr;
     grid-template-rows: auto 1fr;
@@ -148,6 +150,15 @@
   .hint-row button { flex:none; }
   .swatches { display:flex; gap:6px; }
   .swatches[hidden] { display:none; }
+  .sizes { display:flex; gap:6px; align-items:center; }
+  .sizes[hidden] { display:none; }
+  .lw { padding:2px 8px; border:1px solid var(--border2); border-radius:12px; color:var(--text-dim); line-height:0; }
+  .lw.on { color:var(--bg); background:var(--text); border-color:var(--text); }
+  .sz {
+    padding:3px 10px; border:1px solid var(--border2); border-radius:12px; color:var(--text-dim);
+    font-weight:600; line-height:1.3;
+  }
+  .sz.on { color:var(--bg); background:var(--text); border-color:var(--text); }
   .sw { width:24px; height:24px; border-radius:50%; border:2px solid rgba(255,255,255,0.15); flex:none; }
   .sw.on { border-color:var(--text); box-shadow:0 0 0 2px var(--bg2), 0 0 0 4px var(--text); }
   .hint.erase { border-color:var(--down); }
@@ -282,6 +293,7 @@
     .hint { bottom:10px; }
   }
   @media (max-width: 370px) {
+    .tool { font-size:9.5px; letter-spacing:-0.6px; }
     .sw { width:22px; height:22px; }
     .swatches { gap:5px; }
     .top { gap:4px; }
@@ -385,6 +397,8 @@
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="currentColor"/></svg>점</button>
     <button class="tool" data-tool="ray" title="레이 (R)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="12" r="3" fill="currentColor"/><line x1="6" y1="12" x2="22" y2="12"/></svg>레이</button>
+    <button class="tool" data-tool="pen" title="자유선 (P)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c3-6 5-9 7-6s2 7 5 4 4-8 6-9"/></svg>자유선</button>
     <button class="tool" data-tool="text" title="텍스트 (T)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="5 7 5 4 19 4 19 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>텍스트</button>
     <div class="tool-sep"></div>
@@ -400,6 +414,8 @@
     <div class="hint" id="hint">
       <div class="hint-row"><span id="hintText"></span><button id="hintEditText" hidden>글 수정</button><button id="hintDelete" class="del" hidden>삭제</button><button id="hintCancel">취소</button></div>
       <div class="swatches" id="swatches" hidden></div>
+      <div class="sizes" id="sizes" hidden></div>
+      <div class="sizes" id="widths" hidden></div>
     </div>
     <div class="toast" id="toast"></div>
     <div class="clock" id="clock"></div>
@@ -533,6 +549,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- 고칠 때마다 v를 올린다: 배포 직후 브라우저가 옛 app.js를 쓰지 않도록 -->
-<script src="app.js?v=15"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

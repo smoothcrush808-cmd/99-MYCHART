@@ -47,11 +47,23 @@ const wide = (() => {
     return Array.from(list, r => new DOMRect(r.top, W() - r.right, r.height, r.width));
   };
 
+  // 앱 높이: 아이폰 홈 화면 앱(상태바 투명)은 innerHeight·100dvh 모두 상태바 높이만큼 짧게 나와
+  // 아래가 빈다. 홈 화면 앱은 언제나 화면 전체를 쓰므로 그때만 실제 화면 높이를 쓴다.
+  // (키보드가 올라와 크게 줄어든 경우는 건드리지 않음)
+  function appHeight() {
+    const h = window.innerHeight;
+    const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+    if (!standalone || !screen.width || !screen.height) return h;
+    const portrait = window.innerWidth < h;
+    const full = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    return full > h && full - h <= 80 ? full : h;
+  }
+
   function apply(want) {
     // 폰을 실제로 가로로 돌렸으면 이중 회전이 되므로 끈다 (옛 index.html이면 #root가 없어 못 켬)
     on = !!want && !!root && window.innerWidth < window.innerHeight && window.innerWidth <= 720;
     html.style.setProperty('--vw', window.innerWidth + 'px');
-    html.style.setProperty('--vh', window.innerHeight + 'px');
+    html.style.setProperty('--vh', appHeight() + 'px');
     html.classList.toggle('wide', on);
     const b = document.getElementById('wideBtn');
     if (b) b.classList.toggle('on', !!want);
@@ -400,6 +412,14 @@ function timeToLogical(t) {
   const span = b[i + 1].time - b[i].time;
   return i + Math.min(1, (t - b[i].time) / span);
 }
+// 소수 봉 번호 → 차트 시각(초, 봉 사이도 보간). 자유선처럼 봉에 붙이면 안 되는 점에 쓴다
+function logicalToTimeExact(l) {
+  const b = S.bars, s = sec();
+  const i = Math.floor(l);
+  if (i < 0) return b[0].time + l * s;
+  if (i >= b.length - 1) return b[b.length - 1].time + (l - (b.length - 1)) * s;
+  return b[i].time + (l - i) * (b[i + 1].time - b[i].time);
+}
 function logicalToTime(l) {
   const b = S.bars, s = sec();
   const i = Math.round(l);
@@ -548,7 +568,7 @@ function updateLegend() {
 
 // ───────────────────────── 색 (트레이딩뷰 기본 10색에서 남보라를 빼고 흰색을 넣음)
 const PALETTE = ['#ffffff', '#f23645', '#ff9800', '#ffeb3b', '#4caf50', '#089981', '#00bcd4', '#2962ff', '#9c27b0', '#e91e63'];
-const DEFAULT_COLOR = { hline: C.hline, vline: C.hline, ray: C.ray, dot: C.dot, box: C.box, text: '#ffffff' };
+const DEFAULT_COLOR = { hline: C.hline, vline: C.hline, ray: C.ray, dot: C.dot, box: C.box, text: '#ffffff', pen: '#ffeb3b' };
 const isHex = v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
 const colorOf = d => (isHex(d.c) ? d.c : DEFAULT_COLOR[d.type]);
 // 밝은 바탕(흰·노랑 등)엔 어두운 글씨
@@ -599,7 +619,20 @@ function mergeSide(aItems, aTombs, bItems, bTombs) {
 
 // ───────────────────────── 그림 (시각·가격으로 저장 → 확대·스크롤·간격 변경에도 따라온다)
 // 저장 형식: { id, type: 'hline'|'vline'|'ray'|'dot'|'box'|'text', p?, t?, p2?, t2?, c?, text? }  (t = 실제 UTC ms, c = 색 #rrggbb)
-const TEXT_FONT = "600 13px 'Pretendard Variable', -apple-system, sans-serif";
+// 글자 크기 4단계 (px). 크기 정보가 없는 예전 글은 '보통'으로
+const TEXT_SIZES = [{ px: 12, name: '작게' }, { px: 15, name: '보통' }, { px: 19, name: '크게' }, { px: 26, name: '아주 크게' }];
+const TEXT_DEFAULT = 15;
+const textSizeOf = d => (Number.isFinite(d.s) && d.s >= 8 && d.s <= 48 ? d.s : TEXT_DEFAULT);
+const textFont = px => `600 ${px}px 'Pretendard Variable', -apple-system, sans-serif`;
+// 선 굵기 4단계 (px). 점은 같은 단계를 크기로 쓴다. 굵기 정보가 없는 예전 그림은 '보통'(기존 굵기)
+const LINE_WIDTHS = [{ w: 1, name: '얇게' }, { w: 1.5, name: '보통' }, { w: 2.5, name: '굵게' }, { w: 4, name: '아주 굵게' }];
+const LINE_DEFAULT = 1.5;
+const WIDTH_TYPES = ['hline', 'vline', 'ray', 'box', 'dot', 'pen'];
+const DOT_R = { 1: 3.5, 1.5: 4.5, 2.5: 6, 4: 8 };
+const widthOf = d => (LINE_WIDTHS.some(x => x.w === d.w) ? d.w : LINE_DEFAULT);
+const toolWidths = Object.fromEntries(WIDTH_TYPES.map(t => [t, LINE_DEFAULT]));
+for (const [k, v] of Object.entries(store.get(PREF_KEY, {}).widths || {})) if (k in toolWidths && LINE_WIDTHS.some(x => x.w === v)) toolWidths[k] = v;
+let toolTextSize = (() => { const v = store.get(PREF_KEY, {}).textSize; return TEXT_SIZES.some(x => x.px === v) ? v : TEXT_DEFAULT; })();
 const TEXT_MAX = 60;
 const drawings = (() => {
   const stored = store.get(STORE_KEY, { drawings: [] }) || {};
@@ -611,6 +644,7 @@ const drawings = (() => {
   let preview = null;   // 박스 미리보기 둘째 꼭짓점 {t, p}
   let hot = null;       // 지우기 후보 id
   let sel = null;       // 수정 중인 그림 id
+  let stroke = null;    // 그리는 중인 자유선 점들
   let requestUpdate = () => {};
   // 되돌리기: 바꾸기 직전 목록을 쌓아 둔다 (최대 50단계, 새로고침하면 비워짐)
   let history = [];
@@ -621,7 +655,7 @@ const drawings = (() => {
     onHistory(history.length);
   }
   const measure = document.createElement('canvas').getContext('2d');
-  function textWidth(t) { measure.font = TEXT_FONT; return measure.measureText(t).width; }
+  function textWidth(t, px) { measure.font = textFont(px); return measure.measureText(t).width; }
   let axisViews = [];
 
   function valid(d) {
@@ -632,6 +666,7 @@ const drawings = (() => {
       case 'vline': return num(d.t);
       case 'ray': case 'dot': return num(d.p) && num(d.t);
       case 'box': return num(d.p) && num(d.t) && num(d.p2) && num(d.t2);
+      case 'pen': return Array.isArray(d.pts) && d.pts.length >= 2 && d.pts.length <= 2000 && d.pts.every(q => q && num(q.t) && num(q.p));
       case 'text': return num(d.p) && num(d.t) && typeof d.text === 'string' && d.text.trim().length > 0 && d.text.length <= 200;
       default: return false;
     }
@@ -682,19 +717,36 @@ const drawings = (() => {
     for (const d of list) drawOne(ctx, d, w, h, hot === d.id);
     const sd = sel && list.find(d => d.id === sel);
     if (sd) drawHandles(ctx, sd, w, h);
+    if (stroke && stroke.length > 1) drawOne(ctx, { type: 'pen', pts: stroke, c: toolColors.pen, w: toolWidths.pen }, w, h, false);
     if (pending) {
       const c = toolColors.box;
       const a = { type: 'dot', t: pending.t, p: pending.p, c };
-      if (preview) drawOne(ctx, { type: 'box', t: pending.t, p: pending.p, t2: preview.t, p2: preview.p, c }, w, h, false, true);
+      if (preview) drawOne(ctx, { type: 'box', t: pending.t, p: pending.p, t2: preview.t, p2: preview.p, c, w: toolWidths.box }, w, h, false, true);
       drawOne(ctx, a, w, h, false);
     }
   }
 
+  // 자유선 점들 → 화면 좌표
+  const penXY = d => d.pts.map(q => [timeToX(msToChart(q.t)), cy(q.p)]).filter(([x, y]) => x != null && y != null);
+
   function drawOne(ctx, d, w, h, isHot, ghost = false) {
+    const lw = widthOf(d);
+    if (d.type === 'pen') {
+      const xy = penXY(d); if (xy.length < 2) return;
+      ctx.save();
+      ctx.lineWidth = isHot ? lw + 1 : lw;
+      ctx.strokeStyle = isHot ? C.erase : colorOf(d);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(xy[0][0], xy[0][1]);
+      for (let i = 1; i < xy.length; i++) ctx.lineTo(xy[i][0], xy[i][1]);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     if (d.type === 'vline') {
       const x = cx(d); if (x == null) return;
       ctx.save();
-      ctx.lineWidth = isHot ? 2.5 : 1.5;
+      ctx.lineWidth = isHot ? lw + 1 : lw;
       ctx.strokeStyle = isHot ? C.erase : colorOf(d);
       ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, h); ctx.stroke();
       ctx.restore();
@@ -703,7 +755,7 @@ const drawings = (() => {
     const y = cy(d.p);
     if (y == null) return;
     ctx.save();
-    ctx.lineWidth = isHot ? 2.5 : 1.5;
+    ctx.lineWidth = isHot ? lw + 1 : lw;
     const color = colorOf(d);
     switch (d.type) {
       case 'hline': {
@@ -717,14 +769,15 @@ const drawings = (() => {
         ctx.strokeStyle = col; ctx.fillStyle = col;
         const yy = Math.round(y) + 0.5;
         ctx.beginPath(); ctx.moveTo(Math.max(x, -10), yy); ctx.lineTo(w, yy); ctx.stroke();
-        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, Math.max(3, lw + 1.5), 0, Math.PI * 2); ctx.fill();
         break;
       }
       case 'dot': {
         const x = cx(d); if (x == null) break;
         ctx.fillStyle = isHot ? C.erase : color;
         ctx.strokeStyle = C.bg; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(x, y, isHot ? 6 : 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        const r = DOT_R[lw] || 4.5;
+        ctx.beginPath(); ctx.arc(x, y, isHot ? r + 1.5 : r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         break;
       }
       case 'box': {
@@ -738,11 +791,12 @@ const drawings = (() => {
       }
       case 'text': {
         const x = cx(d); if (x == null) break;
-        ctx.font = TEXT_FONT; ctx.textBaseline = 'middle';
+        const px = textSizeOf(d);
+        ctx.font = textFont(px); ctx.textBaseline = 'middle';
         // 캔들 위에서도 읽히게 옅은 어두운 바탕
-        const tw = textWidth(d.text);
+        const tw = textWidth(d.text, px);
         ctx.fillStyle = 'rgba(10,14,20,0.6)';
-        ctx.fillRect(x + 1, y - 10, tw + 6, 20);
+        ctx.fillRect(x + 1, y - px * 0.75, tw + 6, px * 1.5);
         ctx.fillStyle = isHot ? C.erase : color;
         ctx.fillText(d.text, x + 4, y);
         break;
@@ -753,6 +807,7 @@ const drawings = (() => {
 
   // 수정 손잡이: 박스는 네 꼭짓점, 레이·점·글은 시작점, 수평선·수직선은 화면 가운데 한 점
   function handlesOf(d, w, h) {
+    if (d.type === 'pen') return []; // 자유선은 통째로 이동만
     if (d.type === 'vline') { const x = cx(d); return x == null ? [] : [{ x, y: h / 2, tk: 't', pk: null }]; }
     const y = cy(d.p); if (y == null) return [];
     if (d.type === 'hline') return [{ x: w / 2, y, tk: null, pk: 'p' }];
@@ -774,10 +829,24 @@ const drawings = (() => {
     ctx.restore();
   }
 
+  function segDist(px, py, [ax, ay], [bx, by]) {
+    const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+    const k = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0;
+    return Math.hypot(px - (ax + k * dx), py - (ay + k * dy));
+  }
+
   // 지우기용: 탭 위치에서 가장 가까운 그림 (px 거리)
   function hitTest(px, py, tol = 16, only = null) {
     let best = null, bestD = tol;
     for (const d of only ? list.filter(x => x.id === only) : list) {
+      if (d.type === 'pen') {
+        const xy = penXY(d);
+        for (let i = 1; i < xy.length; i++) {
+          const dd = segDist(px, py, xy[i - 1], xy[i]);
+          if (dd < bestD) { bestD = dd; best = d; }
+        }
+        continue;
+      }
       if (d.type === 'vline') {
         const x = cx(d);
         if (x != null && Math.abs(px - x) < bestD) { bestD = Math.abs(px - x); best = d; }
@@ -792,7 +861,8 @@ const drawings = (() => {
         dist = px >= x ? Math.abs(py - y) : Math.hypot(px - x, py - y);
       } else if (d.type === 'text') {
         const x = cx(d); if (x == null) continue;
-        const l = x, r = x + 4 + textWidth(d.text), t = y - 9, b = y + 9;
+        const fs = textSizeOf(d); // 이름 주의: px는 탭 위치
+        const l = x, r = x + 4 + textWidth(d.text, fs), t = y - fs * 0.75, b = y + fs * 0.75;
         dist = Math.hypot(Math.max(l - px, 0, px - r), Math.max(t - py, 0, py - b));
       } else if (d.type === 'box') {
         const x1 = cx(d), x2 = timeToX(msToChart(d.t2)), y2 = cy(d.p2);
@@ -883,7 +953,9 @@ const drawings = (() => {
         if (d.t != null) clean.t = d.t;
         if (d.type === 'box') { clean.p2 = d.p2; clean.t2 = d.t2; }
         if (isHex(d.c)) clean.c = d.c;
-        if (d.type === 'text') clean.text = d.text;
+        if (d.type === 'text') { clean.text = d.text; if (Number.isFinite(d.s)) clean.s = d.s; }
+        if (LINE_WIDTHS.some(x => x.w === d.w)) clean.w = d.w;
+        if (d.type === 'pen') clean.pts = d.pts.map(q => ({ t: q.t, p: q.p }));
         list.push(clean); have.add(d.id); added++;
       }
       if (!added) { history.pop(); onHistory(history.length); }
@@ -892,6 +964,7 @@ const drawings = (() => {
     },
     hitTest,
     setPending(p) { pending = p; preview = null; requestUpdate(); },
+    setStroke(pts) { stroke = pts; requestUpdate(); },
     getPending: () => pending,
     setPreview(p) { preview = p; requestUpdate(); },
     setHot(id) { if (hot !== id) { hot = id; rebuildAxis(); requestUpdate(); } },
@@ -903,6 +976,7 @@ let tool = null;
 const HINTS = {
   hline: '수평선 — 가격 위치를 탭하세요',
   vline: '수직선 — 시각(봉) 위치를 탭하세요',
+  pen: '자유선 — 끌어서 그리세요 (여러 획 가능)',
   dot: '점 — 찍을 위치를 탭하세요',
   ray: '레이 — 시작점을 탭하세요 (오른쪽으로 뻗음)',
   box: '박스 — 첫 꼭짓점을 탭하세요',
@@ -920,6 +994,12 @@ function setTool(t) {
   drawings.setHot(null);
   document.querySelectorAll('#tools .tool[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
   showHint(t ? HINTS[t] : null);
+  lockChart();
+}
+// 그림을 고쳤거나 자유선을 그리는 중엔 차트 끌기·확대를 잠근다 (손가락이 그림에만 쓰이게)
+function lockChart() {
+  const lock = !!drawings.getSel() || tool === 'pen';
+  chart.applyOptions({ handleScroll: !lock, handleScale: !lock });
 }
 function showHint(text) {
   ui.hint.classList.toggle('show', !!text);
@@ -928,7 +1008,7 @@ function showHint(text) {
   $('hintDelete').hidden = !drawings.getSel();
   const sd0 = drawings.getSel() && drawings.get(drawings.getSel());
   $('hintEditText').hidden = !(sd0 && sd0.type === 'text');
-  $('hintCancel').textContent = drawings.getSel() ? '완료' : '취소';
+  $('hintCancel').textContent = drawings.getSel() || tool === 'pen' ? '완료' : '취소';
   renderSwatches();
 }
 
@@ -955,14 +1035,64 @@ function renderSwatches() {
     });
     box.appendChild(b);
   }
+  renderSizes(type, sd);
+  renderWidths(type, sd);
+}
+
+// 선 굵기 고르기 (선·박스·점)
+function renderWidths(type, sd) {
+  const box = $('widths');
+  box.hidden = !WIDTH_TYPES.includes(type);
+  if (box.hidden) return;
+  const cur = sd ? widthOf(sd) : toolWidths[type];
+  box.innerHTML = '';
+  for (const z of LINE_WIDTHS) {
+    const b = document.createElement('button');
+    b.className = 'lw' + (z.w === cur ? ' on' : '');
+    b.title = z.name;
+    b.innerHTML = type === 'dot'
+      ? `<svg viewBox="0 0 32 18" width="32" height="18"><circle cx="16" cy="9" r="${DOT_R[z.w]}" fill="currentColor"/></svg>`
+      : `<svg viewBox="0 0 32 18" width="32" height="18"><line x1="3" y1="9" x2="29" y2="9" stroke="currentColor" stroke-width="${z.w}" stroke-linecap="round"/></svg>`;
+    b.addEventListener('click', () => {
+      toolWidths[type] = z.w; store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), widths: toolWidths });
+      const id = drawings.getSel();
+      if (id) { drawings.snapshot(); drawings.patch(id, { w: z.w }); drawings.save(); }
+      drawings.refresh();
+      renderSwatches();
+    });
+    box.appendChild(b);
+  }
+}
+
+// 글자 크기 고르기 (텍스트일 때만)
+function renderSizes(type, sd) {
+  const box = $('sizes');
+  box.hidden = type !== 'text';
+  if (type !== 'text') return;
+  const cur = sd ? textSizeOf(sd) : toolTextSize;
+  box.innerHTML = '';
+  for (const z of TEXT_SIZES) {
+    const b = document.createElement('button');
+    b.className = 'sz' + (z.px === cur ? ' on' : '');
+    b.textContent = z.name;
+    b.style.fontSize = Math.min(z.px, 17) + 'px';
+    b.addEventListener('click', () => {
+      toolTextSize = z.px; store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), textSize: z.px });
+      const id = drawings.getSel();
+      if (id) { drawings.snapshot(); drawings.patch(id, { s: z.px }); drawings.save(); }
+      drawings.refresh();
+      renderSwatches();
+    });
+    box.appendChild(b);
+  }
 }
 
 // 그림 선택(수정 모드): 선택 중엔 차트 끌기·확대를 잠가서 손가락이 그림만 움직이게 한다
 function select(id) {
   if (id === drawings.getSel()) return;
   drawings.setSel(id);
-  chart.applyOptions({ handleScroll: !id, handleScale: !id });
   if (id) { tool = null; document.querySelectorAll('#tools .tool').forEach(b => b.classList.remove('on')); }
+  lockChart();
   showHint(id ? editHint() : null);
 }
 function editHint() {
@@ -990,6 +1120,7 @@ function openTextModal(ctx, value) {
   textCtx = ctx;
   $('textInput').value = value || '';
   openModal('textModal');
+  $('textInput').focus(); // 바로 쳐도 첫 글자가 빠지지 않게
   setTimeout(() => $('textInput').focus(), 0);
 }
 function commitText() {
@@ -997,7 +1128,7 @@ function commitText() {
   closeModal($('textModal'));
   const ctx = textCtx; textCtx = null;
   if (!ctx || !v) return;
-  if (ctx.mode === 'new') drawings.add({ type: 'text', t: ctx.pt.t, p: ctx.pt.p, c: ctx.c, text: v });
+  if (ctx.mode === 'new') drawings.add({ type: 'text', t: ctx.pt.t, p: ctx.pt.p, c: ctx.c, s: toolTextSize, text: v });
   else if (drawings.get(ctx.id) && drawings.get(ctx.id).text !== v) {
     drawings.snapshot(); drawings.patch(ctx.id, { text: v }); drawings.save();
   }
@@ -1025,13 +1156,26 @@ const chartEl = $('chart');
 const taps = new Map(); // pointerId → {x, y, t}
 let multiTouch = false;
 let drag = null; // {id, pointerId, handle|null, start:{l,p}, orig}
+let pen = null;  // 그리는 중인 자유선 {pointerId, pts, last:[x,y]}
+function penPoint(x, y) {
+  const l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
+  if (l == null || p == null || !S.bars.length) return null;
+  return { t: Math.round(chartToMs(logicalToTimeExact(l))), p: Math.round(p * 100) / 100 };
+}
 function localXY(e) {
   const r = chartEl.getBoundingClientRect();
   return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width - chart.priceScale('right').width(), h: r.height - ts.height() };
 }
 chartEl.addEventListener('pointerdown', e => {
   taps.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
-  if (taps.size > 1) { multiTouch = true; drag = null; return; }
+  if (taps.size > 1) { multiTouch = true; drag = null; pen = null; drawings.setStroke(null); return; }
+  if (tool === 'pen') {
+    const { x, y } = localXY(e);
+    const q = penPoint(x, y); if (!q) return;
+    pen = { pointerId: e.pointerId, pts: [q], last: [x, y] };
+    try { chartEl.setPointerCapture(e.pointerId); } catch {}
+    return;
+  }
   const sid = drawings.getSel();
   if (!sid || tool) return;
   const { x, y, w, h } = localXY(e);
@@ -1044,6 +1188,14 @@ chartEl.addEventListener('pointerdown', e => {
   try { chartEl.setPointerCapture(e.pointerId); } catch {}
 }, true);
 chartEl.addEventListener('pointermove', e => {
+  if (pen && e.pointerId === pen.pointerId) {
+    const { x, y } = localXY(e);
+    if (Math.hypot(x - pen.last[0], y - pen.last[1]) < 3 || pen.pts.length >= 2000) return; // 3px마다 한 점
+    const q = penPoint(x, y); if (!q) return;
+    pen.pts.push(q); pen.last = [x, y];
+    drawings.setStroke(pen.pts);
+    return;
+  }
   if (!drag || e.pointerId !== drag.pointerId) return;
   const { x, y } = localXY(e);
   const l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
@@ -1063,10 +1215,22 @@ chartEl.addEventListener('pointermove', e => {
     const f = o.p != null ? { p: round(o.p + dp) } : {};
     if (o.t != null) f.t = shiftT(o.t);
     if (o.type === 'box') { f.p2 = round(o.p2 + dp); f.t2 = shiftT(o.t2); }
+    if (o.type === 'pen') {
+      // 자유선은 봉에 붙이지 않고 그대로 평행 이동
+      const dlx = l - drag.start.l;
+      f.pts = o.pts.map(q => ({ t: Math.round(chartToMs(logicalToTimeExact(timeToLogical(msToChart(q.t)) + dlx))), p: round(q.p + dp) }));
+    }
     drawings.patch(drag.id, f);
   }
 }, true);
 const endTap = e => {
+  if (pen && e.pointerId === pen.pointerId) {
+    const pts = pen.pts; pen = null;
+    drawings.setStroke(null);
+    taps.delete(e.pointerId);
+    if (e.type === 'pointerup' && pts.length >= 2) drawings.add({ type: 'pen', pts, c: toolColors.pen, w: toolWidths.pen });
+    return; // 자유선 도구는 켜 둔 채로 (여러 획)
+  }
   if (drag && e.pointerId === drag.pointerId) {
     const moved = drag.moved;
     drag = null;
@@ -1089,6 +1253,7 @@ chartEl.addEventListener('pointerup', endTap, true);
 chartEl.addEventListener('pointercancel', endTap, true);
 
 function onTap(x, y) {
+  if (tool === 'pen') return;
   if (!tool) {
     if (notes.tap(x, y)) return; // 내 기록 점이 먼저
     // 도구 없이 탭: 그림을 고르면 수정 모드, 빈 곳이면 해제
@@ -1106,17 +1271,17 @@ function onTap(x, y) {
   }
   const pt = pointAt(x, y);
   if (!pt) return;
-  const c = toolColors[tool];
-  if (tool === 'hline') drawings.add({ type: 'hline', p: pt.p, c });
-  else if (tool === 'vline') drawings.add({ type: 'vline', t: pt.t, c });
-  else if (tool === 'dot') drawings.add({ type: 'dot', t: pt.t, p: pt.p, c });
-  else if (tool === 'ray') drawings.add({ type: 'ray', t: pt.t, p: pt.p, c });
+  const c = toolColors[tool], w = toolWidths[tool];
+  if (tool === 'hline') drawings.add({ type: 'hline', p: pt.p, c, w });
+  else if (tool === 'vline') drawings.add({ type: 'vline', t: pt.t, c, w });
+  else if (tool === 'dot') drawings.add({ type: 'dot', t: pt.t, p: pt.p, c, w });
+  else if (tool === 'ray') drawings.add({ type: 'ray', t: pt.t, p: pt.p, c, w });
   else if (tool === 'text') { setTool(null); openTextModal({ mode: 'new', pt, c }, ''); return; }
   else if (tool === 'box') {
     const first = drawings.getPending();
     if (!first) { drawings.setPending(pt); showHint(HINTS.box2); return; }
     if (first.t === pt.t && first.p === pt.p) return;
-    drawings.add({ type: 'box', t: first.t, p: first.p, t2: pt.t, p2: pt.p, c });
+    drawings.add({ type: 'box', t: first.t, p: first.p, t2: pt.t, p2: pt.p, c, w });
   }
   setTool(null);
 }
@@ -1354,7 +1519,7 @@ document.addEventListener('keydown', e => {
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && drawings.getSel()) { $('hintDelete').click(); return; }
   if (document.querySelector('.backdrop.show')) return;
-  const map = { h: 'hline', v: 'vline', b: 'box', d: 'dot', r: 'ray', t: 'text', e: 'erase' };
+  const map = { h: 'hline', v: 'vline', b: 'box', d: 'dot', r: 'ray', t: 'text', p: 'pen', e: 'erase' };
   const k = e.key.toLowerCase();
   if (map[k]) setTool(tool === map[k] ? null : map[k]);
   else if (k === 'g') $('gotoBtn').click();
