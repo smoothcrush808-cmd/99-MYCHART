@@ -230,6 +230,9 @@
     width:var(--vh); height:var(--vw); overflow:hidden;
   }
   html.wide .app { height:100%; padding: 0 var(--safe-b) 0 var(--safe-t); }
+  /* 와이드에서 팝업 높이는 돌린 화면의 높이(= 폰의 폭)에 맞춘다 — 100dvh는 돌리기 전 세로 길이라 팝업이 넘쳐 스크롤·닫기가 안 됐다 (11-09) */
+  html.wide .panel { max-height:calc(var(--vw) - 32px); -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  html.wide #noteSheet:not(.sheet) .panel { max-height:calc(var(--vw) * 0.94); }
 
   /* 모바일: 도구 막대를 아래로 */
   @media (max-width: 720px) {
