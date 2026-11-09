@@ -1688,10 +1688,13 @@ const MARK_NONE = '#33d4ff';
 const SC_COL = { '대기': '#9aa4b2', '진입': '#3d8bff', '불참': '#ffcc33', '종료': '#26e0a5' }; // 시나리오 ◆ = 상태
 const isSc = n => n.kind === 'sc';
 const isTr = n => n.kind === 'tr'; // 비트겟 매매 — 가격 자리에 진입 ▲▼ · 청산 ✕ · 평단 잇는 점선
-const TR_UP = '#26e0a5', TR_DN = '#f23645', TR_IN = '#3d8bff', TR_OUT = '#ffcc33'; // 진입 파랑 · 청산 노랑 (봉 색과 안 겹치게)
+// 99-REPLAY와 같은 결: 진입 ▲▼ = 방향 색 · 추가 + · 부분 청산 노란 점 · 마지막 청산 흰 ✕ · 보유 구간 옅게 칠함
+const TR_UP = '#26e0a5', TR_DN = '#ff5572', TR_RED = '#ffcc33', TR_EXIT = '#e6edf3', TR_BG = '#0a0e14';
 const isPhone = () => window.matchMedia('(max-width: 720px)').matches || wide.isOn();
 const notes = (() => {
-  let on = !!store.get(PREF_KEY, {}).notes;
+  let on = !!store.get(PREF_KEY, {}).notes;       // MY ● · 시나리오 ◆
+  let tron = !!store.get(PREF_KEY, {}).trades;    // 매매 (따로 켜고 끈다)
+  const shownList = () => list.filter(n => isTr(n) ? tron : on);
   let env = null;          // 암호 봉투
   let key = null;          // 푼 키 (캡쳐 풀 때도 씀) · 샘플이면 'sample'
   let list = [];           // [{id, t(ms), ...}] 시각순
@@ -1705,7 +1708,8 @@ const notes = (() => {
   function setBtn() {
     const b = $('notesBtn'); if (!b) return;
     b.classList.toggle('on', on);
-    $('notesCount').textContent = on && list.length ? list.length : '';
+    $('notesCount').textContent = on && list.length ? list.filter(n => !isTr(n)).length : '';
+    $('tradesBtn').classList.toggle('on', tron);
   }
   function setList(d) {
     list = (d && Array.isArray(d.notes) ? d.notes : []).filter(n => n && Number.isFinite(n.t)).sort((a, b) => a.t - b.t);
@@ -1758,53 +1762,64 @@ const notes = (() => {
     setBtn(); requestUpdate();
     if (on) await ensure();
   }
+  async function toggleTr(want = !tron) {
+    tron = want;
+    store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), trades: tron });
+    setBtn(); requestUpdate();
+    if (tron) await ensure();
+  }
 
-  // 매매: 평단(진입 → 청산) 점선 + 체결(주문 단위)마다 표시. 롱 진입 ▲ 초록 · 숏 진입 ▼ 빨강 · 청산 ✕
+  // 매매 (99-REPLAY와 같은 결): 보유 구간 옅게 + 위쪽 띠, 체결(주문 단위)마다 —
+  // 첫 진입 ▲(롱)/▼(숏) 방향 색 · 추가 진입 + · 중간 청산 노란 점 · 마지막 청산 흰 ✕ · 끝에 순손익 꼬리표
   function drawTrades(ctx, w, h, k) {
     const cy = p => series.priceToCoordinate(p);
     const tx = ms => timeToX(msToChart(ms));
     for (const n of list) {
       if (!isTr(n)) continue;
-      const x0 = tx(n.t), x1 = tx(n.t2), y0 = cy(n.open), y1 = cy(n.close);
-      if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
-      if (Math.max(x0, x1) < -20 || Math.min(x0, x1) > w + 20) continue;
-      const sel = n.id === selId;
-      const col = n.net >= 0 ? TR_UP : TR_DN;
+      const x0 = tx(n.t), x1 = tx(n.t2);
+      if (x0 == null || x1 == null || x1 < -20 || x0 > w + 20) continue;
+      const long = n.side === 'long', sideC = long ? TR_UP : TR_DN, sel = n.id === selId;
       ctx.save();
-      ctx.strokeStyle = col; ctx.globalAlpha = sel ? 1 : 0.9; ctx.lineWidth = sel ? 2.5 : 2; ctx.setLineDash([5, 4]);
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
-      for (const f of n.fills || []) {
-        const x = tx(f.t), y = cy(f.p); if (x == null || y == null) continue;
-        const r = 7 * k;
-        // 체결가에 짧은 가로 눈금 (봉 위에서도 자리가 보이게)
-        ctx.strokeStyle = 'rgba(10,14,20,0.9)'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(x - 11 * k, y); ctx.lineTo(x + 11 * k, y); ctx.stroke();
-        ctx.strokeStyle = f.open ? TR_IN : TR_OUT; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(x - 11 * k, y); ctx.lineTo(x + 11 * k, y); ctx.stroke();
-        if (f.open) { // 삼각형: 롱은 체결가 아래에서 위를, 숏은 위에서 아래를 가리킨다 (눈금에서 조금 떨어뜨림)
-          const s = n.side === 'long' ? 1 : -1, g = 4 * k;
-          ctx.beginPath(); ctx.moveTo(x, y + s * g); ctx.lineTo(x - r, y + s * (g + r * 1.5)); ctx.lineTo(x + r, y + s * (g + r * 1.5)); ctx.closePath();
-          ctx.fillStyle = TR_IN; ctx.fill();
-          ctx.lineWidth = 1.6; ctx.strokeStyle = sel ? '#ffffff' : '#0a0e14'; ctx.stroke();
-          hits.push({ x, y: y + s * (g + r * 0.8), items: [n] });
+      const l = Math.max(-1, x0), r = Math.min(w + 1, Math.max(x1, x0 + 3));
+      ctx.fillStyle = long ? `rgba(38,224,165,${sel ? 0.12 : 0.07})` : `rgba(255,85,114,${sel ? 0.12 : 0.07})`;
+      ctx.fillRect(l, 0, r - l, h);
+      ctx.fillStyle = long ? 'rgba(38,224,165,0.55)' : 'rgba(255,85,114,0.55)';
+      ctx.fillRect(l, 0, r - l, 3);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      const fl = n.fills || [], lastClose = fl.map(f => !f.open).lastIndexOf(true), firstOpen = fl.findIndex(f => f.open);
+      fl.forEach((f, i) => {
+        const x = tx(f.t), y = cy(f.p); if (x == null || y == null) return;
+        if (f.open && i === firstOpen) {
+          const d = long ? -1 : 1; // 롱 ▲ / 숏 ▼ — 꼭짓점이 체결가 쪽
+          ctx.fillStyle = sideC; ctx.strokeStyle = sel ? '#ffffff' : TR_BG; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(x, y + d * 6 * k); ctx.lineTo(x - 7 * k, y - d * 6 * k); ctx.lineTo(x + 7 * k, y - d * 6 * k); ctx.closePath();
+          ctx.fill(); ctx.stroke();
+        } else if (f.open) {
+          ctx.strokeStyle = TR_BG; ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.moveTo(x - 6 * k, y); ctx.lineTo(x + 6 * k, y); ctx.moveTo(x, y - 6 * k); ctx.lineTo(x, y + 6 * k); ctx.stroke();
+          ctx.strokeStyle = sideC; ctx.lineWidth = 2.5; ctx.stroke();
+        } else if (i !== lastClose) {
+          ctx.fillStyle = TR_RED; ctx.strokeStyle = TR_BG; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(x, y, 4.5 * k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         } else {
-          const q = r * 0.75;
-          ctx.lineCap = 'round';
-          ctx.strokeStyle = 'rgba(10,14,20,0.9)'; ctx.lineWidth = 4.5;
+          const q = 5 * k;
+          ctx.strokeStyle = TR_BG; ctx.lineWidth = 5;
           ctx.beginPath(); ctx.moveTo(x - q, y - q); ctx.lineTo(x + q, y + q); ctx.moveTo(x + q, y - q); ctx.lineTo(x - q, y + q); ctx.stroke();
-          ctx.strokeStyle = sel ? '#ffffff' : TR_OUT; ctx.lineWidth = 2.2; ctx.stroke();
-          hits.push({ x, y, items: [n] });
+          ctx.strokeStyle = TR_EXIT; ctx.lineWidth = 2.5; ctx.stroke();
         }
-      }
+        hits.push({ x, y, items: [n] });
+      });
       // 순손익 꼬리표 — 마지막 청산 오른쪽
-      const t = `${n.side === 'long' ? '롱' : '숏'} ${n.net >= 0 ? '+' : ''}${n.net.toFixed(2)}`;
-      ctx.font = `600 ${Math.round(11 * k)}px 'IBM Plex Mono', Menlo, monospace`;
-      const tw = ctx.measureText(t).width, bx = x1 + 10 * k, bh = 16 * k, by = y1 - bh / 2;
-      ctx.fillStyle = 'rgba(10,14,20,0.85)'; ctx.strokeStyle = col; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, tw + 10 * k, bh, 4) : ctx.rect(bx, by, tw + 10 * k, bh); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText(t, bx + 5 * k, y1 + 0.5);
-      hits.push({ x: bx + (tw + 10 * k) / 2, y: y1, items: [n] });
+      const y1 = cy(n.close);
+      if (y1 != null) {
+        const t = `${long ? '롱' : '숏'} ${n.net >= 0 ? '+' : ''}${n.net.toFixed(2)}`, col = n.net >= 0 ? TR_UP : TR_DN;
+        ctx.font = `600 ${(10.5 * k).toFixed(1)}px 'IBM Plex Mono', Menlo, monospace`;
+        const tw = ctx.measureText(t).width + 8, bx = x1 + 10 * k, bh = Math.round(15 * k), by = Math.round(y1 - bh / 2);
+        ctx.fillStyle = 'rgba(10,14,20,0.85)'; ctx.fillRect(bx, by, tw, bh);
+        ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(t, bx + 4, by + bh / 2 + 0.5);
+        hits.push({ x: bx + tw / 2, y: y1, items: [n] });
+      }
       ctx.restore();
     }
   }
@@ -1812,8 +1827,9 @@ const notes = (() => {
   // 점: 시간축 바로 위. 가까운 점(10px 안)은 하나로 묶고 개수를 적는다
   function draw(ctx, w, h) {
     hits = [];
-    if (!on || !list.length || !S.bars.length) return;
-    drawTrades(ctx, w, h, isPhone() ? 1.25 : 1);
+    if (!(on || tron) || !list.length || !S.bars.length) return;
+    if (tron) drawTrades(ctx, w, h, isPhone() ? 1.3 : 1);
+    if (!on) return;
     const k = isPhone() ? 1.3 : 1;
     // 줄 둘: 아래 = MY 기록 ●, 그 위 = 시나리오 ◆
     const rows = [{ y: h - Math.round(9 * k), sc: false }, { y: h - Math.round(26 * k), sc: true }];
@@ -1866,7 +1882,7 @@ const notes = (() => {
 
   // 탭: 점 근처(손가락 크기)면 팝업. 아니면 false → 원래 탭 처리(그림 고르기)
   function tap(x, y) {
-    if (!on || !hits.length) return false;
+    if (!(on || tron) || !hits.length) return false;
     const tol = isPhone() ? 24 : 14;
     let best = null, bd = Infinity;
     for (const g of hits) {
@@ -1889,6 +1905,7 @@ const notes = (() => {
   function trHtml(n) {
     const lg = n.side === 'long';
     const moved = (lg ? 1 : -1) * (n.close - n.open);
+    const fl = n.fills || [], lastC = fl.map(f => !f.open).lastIndexOf(true), firstO = fl.findIndex(f => f.open);
     return `
       <article class="nt">
         <div class="nt-head">
@@ -1906,7 +1923,7 @@ const notes = (() => {
           <tr><th>수수료·펀딩</th><td>${num(n.fee, 2)}</td><th>순손익</th><td>${sgn(n.net)} <small>USDT</small></td></tr>
           ${n.sl || n.tp ? `<tr><th>손절</th><td>${esc(n.sl) || '—'}</td><th>익절</th><td>${esc(n.tp) || '—'}</td></tr>` : ''}
         </table>
-        <div class="tr-fills">${(n.fills || []).map(f => `<div><span>${kst(f.t)}</span><span class="${f.open ? 'tr-in' : 'tr-cl'}">${f.open ? (lg ? '▲ 진입' : '▼ 진입') : '✕ 청산'}</span><span>${num(f.p)}</span><span>${f.q}</span></div>`).join('')}</div>
+        <div class="tr-fills">${fl.map((f, i) => `<div><span>${kst(f.t)}</span><span class="${f.open ? (lg ? 'tr-up' : 'tr-dn') : i === lastC ? 'tr-ex' : 'tr-cl'}">${f.open ? (i === firstO ? (lg ? '▲ 진입' : '▼ 진입') : '+ 추가') : i === lastC ? '✕ 청산' : '● 일부 청산'}</span><span>${num(f.p)}</span><span>${f.q}</span></div>`).join('')}</div>
         ${n.lessons && n.lessons.length ? `<div class="nt-result"><b>복기</b>${n.lessons.map(l => `<div>· ${esc(l)}</div>`).join('')}</div>` : ''}
         ${n.file ? `<div class="tr-file">볼트 매매/${esc(n.file)}.md</div>` : ''}
       </article>`;
@@ -1940,10 +1957,10 @@ const notes = (() => {
         ${n.comments && n.comments.length ? `<details class="nt-cm"><summary>Claude 댓글 ${n.comments.length}</summary>${
           n.comments.map(c => `<p>${esc(c.text)}</p>`).join('')}</details>` : ''}
       </article>`).join('');
-    const i = list.indexOf(items[0]), j = list.indexOf(items[items.length - 1]);
+    const L = shownList(), i = L.indexOf(items[0]), j = L.indexOf(items[items.length - 1]);
     $('notePrev').disabled = i <= 0;
-    $('noteNext').disabled = j < 0 || j >= list.length - 1;
-    $('notePos').textContent = items.length > 1 ? `${i + 1}–${j + 1} / ${list.length}` : `${i + 1} / ${list.length}`;
+    $('noteNext').disabled = j < 0 || j >= L.length - 1;
+    $('notePos').textContent = items.length > 1 ? `${i + 1}–${j + 1} / ${L.length}` : `${i + 1} / ${L.length}`;
     $('noteSheet').classList.toggle('sheet', isPhone());
     openModal('noteSheet');
     $('noteBody').scrollTop = 0;
@@ -1968,10 +1985,10 @@ const notes = (() => {
     } catch (e) { el.innerHTML = `<span>캡쳐를 열지 못했습니다 (${esc(e.message)})</span>`; }
   }
   function step(dir) {
-    const i = list.indexOf(dir < 0 ? shown[0] : shown[shown.length - 1]) + dir;
-    if (i < 0 || i >= list.length) return;
-    jumpTo(list[i].t, { mark: false });
-    show([list[i]]);
+    const L = shownList(), i = L.indexOf(dir < 0 ? shown[0] : shown[shown.length - 1]) + dir;
+    if (i < 0 || i >= L.length) return;
+    jumpTo(L[i].t, { mark: false });
+    show([L[i]]);
   }
   $('noteBody').addEventListener('click', e => {
     const id = e.target.closest('[data-go]')?.dataset.go;
@@ -1984,6 +2001,7 @@ const notes = (() => {
   $('notePrev').addEventListener('click', () => step(-1));
   $('noteNext').addEventListener('click', () => step(1));
   $('notesBtn').addEventListener('click', () => toggle());
+  $('tradesBtn').addEventListener('click', () => toggleTr());
 
   async function doUnlock() {
     const pw = $('notesPw').value; if (!pw) return;
@@ -1991,7 +2009,7 @@ const notes = (() => {
     try {
       await unlockPw(pw, $('notesRemember').checked);
       closeModal($('notesLock'));
-      toast(`MY 기록 ${list.length}개를 열었습니다`);
+      toast(`MY 기록 ${list.filter(n => !isTr(n)).length}개 · 매매 ${list.filter(isTr).length}건을 열었습니다`);
     } catch (e) {
       toast(e.name === 'OperationError' ? '비밀번호가 맞지 않습니다' : '열지 못했습니다', { error: true, detail: e.name === 'OperationError' ? '' : e.message });
     } finally { $('notesOk').disabled = false; $('notesOk').textContent = '열기'; $('notesPw').value = ''; }
@@ -2000,8 +2018,8 @@ const notes = (() => {
   $('notesPw').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doUnlock(); } });
 
   setBtn();
-  if (on) ensure();
-  return { tap, toggle, refresh: () => requestUpdate(), list: () => list.slice() };
+  if (on || tron) ensure();
+  return { tap, toggle, toggleTr, refresh: () => requestUpdate(), list: () => list.slice() };
 })();
 
 // ───────────────────────── 지금 시각 (KST) — 캡쳐에 같이 찍히게 가격축·시간축이 만나는 오른쪽 아래 모서리에
