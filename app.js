@@ -1523,6 +1523,7 @@ document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (map[k]) setTool(tool === map[k] ? null : map[k]);
   else if (k === 'g') $('gotoBtn').click();
+  else if (k === 'c') capture.shoot();
   else if (k === 'l') $('latestBtn').click();
   else if (k === '1') switchInterval('5m');
   else if (k === '2') switchInterval('15m');
@@ -1935,6 +1936,115 @@ const notes = (() => {
     } catch {}
   };
   tick(); setInterval(tick, 1000);
+})();
+
+// ───────────────────────── 차트 캡처 (사진첩 저장 없음: 폰은 공유 창, PC는 클립보드 복사 · 파일 저장)
+const capture = (() => {
+  let blob = null, url = '', fileName = 'btc-chart.png';
+  const IV_NAME = { '5m': '5분', '15m': '15분', '1h': '1시간' };
+  const canShareFiles = f => { try { return !!(navigator.canShare && navigator.canShare({ files: [f] })); } catch { return false; } };
+  const isTouch = matchMedia('(pointer: coarse)').matches;
+
+  // 버튼을 가격축·시간축 바로 안쪽에 둔다
+  function place() {
+    const b = $('capBtn');
+    b.style.right = (chart.priceScale('right').width() + 8) + 'px';
+    b.style.bottom = (ts.height() + 8) + 'px';
+  }
+
+  // 차트(그림 포함) + 위쪽 정보 띠를 한 장으로. 폭이 좁으면 정보 띠를 두 줄로
+  function render() {
+    const shot = chart.takeScreenshot(true, false);
+    const scale = shot.width / Math.max(1, $('chart').clientWidth);
+    const pad = Math.round(10 * scale);
+    const last = S.bars[S.bars.length - 1];
+    const now = msToChart(Date.now());
+    const title = 'BTC/USDT';
+    const mid = `${IV_NAME[S.iv]} · 바이낸스 현물${last && S.atLatest ? ' · ' + fmtPrice(last.close) : ''}`;
+    const when = `${fmtChartTime(now)} KST`;
+    const fTitle = `700 ${Math.round(14 * scale)}px 'IBM Plex Mono', Menlo, monospace`;
+    const fText = `500 ${Math.round(12 * scale)}px 'IBM Plex Mono', Menlo, monospace`;
+    const m = document.createElement('canvas').getContext('2d');
+    m.font = fTitle; const wTitle = m.measureText(title + '  ').width;
+    m.font = fText; const wMid = m.measureText(mid).width, wWhen = m.measureText(when).width;
+    const oneLine = pad + wTitle + wMid + pad * 2 + wWhen + pad <= shot.width;
+    const line = Math.round(30 * scale);
+    const band = oneLine ? line : Math.round(48 * scale);
+
+    const c = document.createElement('canvas');
+    c.width = shot.width; c.height = shot.height + band;
+    const g = c.getContext('2d');
+    g.fillStyle = C.bg; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(shot, 0, band);
+    const hair = Math.max(1, Math.round(scale));
+    g.fillStyle = C.border; g.fillRect(0, band - hair, c.width, hair);
+    g.textBaseline = 'middle';
+    const y1 = oneLine ? band / 2 : Math.round(16 * scale);
+    g.font = fTitle; g.fillStyle = C.btc; g.fillText(title, pad, y1);
+    g.font = fText; g.fillStyle = C.text; g.fillText(mid, pad + wTitle, y1);
+    if (oneLine) { g.textAlign = 'right'; g.fillText(when, c.width - pad, y1); }
+    else g.fillText(when, pad, Math.round(36 * scale));
+
+    const d = new Date(now * 1000);
+    fileName = `btc-${S.iv}-${d.getUTCFullYear()}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}-${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}.png`;
+    return c;
+  }
+  const pad2 = n => String(n).padStart(2, '0');
+  const toBlob = c => new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('이미지 변환 실패'))), 'image/png'));
+
+  async function copy(blobOrPromise) {
+    // 사파리는 클릭 안에서 바로 ClipboardItem을 만들어야 해서 Promise째로 넘긴다
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobOrPromise })]);
+  }
+
+  async function shoot() {
+    let canvas;
+    try { canvas = render(); } catch (e) { toast('캡처 실패 — ' + e.message, { error: true }); return; }
+    const pending = toBlob(canvas);
+    let copied = false;
+    if (!isTouch && navigator.clipboard && window.ClipboardItem) {
+      // PC: 누르자마자 클립보드에 복사
+      try { await copy(pending); copied = true; } catch { /* 아래 버튼으로 다시 */ }
+    }
+    try { blob = await pending; } catch (e) { toast('캡처 실패 — ' + e.message, { error: true }); return; }
+    if (url) URL.revokeObjectURL(url);
+    url = URL.createObjectURL(blob);
+    $('capImg').src = url;
+    const file = new File([blob], fileName, { type: 'image/png' });
+    $('capShare').hidden = !canShareFiles(file);
+    $('capNote').textContent = copied
+      ? '✓ 클립보드에 복사했습니다 — 바로 붙여넣기(Ctrl+V) 하세요. 사진첩에는 저장되지 않습니다.'
+      : ($('capShare').hidden ? '복사하거나 파일로 저장하세요. 사진첩에는 저장되지 않습니다.'
+        : '공유… → 카톡·Claude·메모 등으로 보내기 (사진첩엔 저장 안 됨). 붙여넣을 곳이 있으면 복사.');
+    openModal('capModal');
+    if (copied) toast('📋 차트를 클립보드에 복사했습니다', { ms: 2000 });
+  }
+
+  $('capBtn').addEventListener('click', shoot);
+  $('capShare').addEventListener('click', async () => {
+    if (!blob) return;
+    try {
+      await navigator.share({ files: [new File([blob], fileName, { type: 'image/png' })], title: 'BTC 차트' });
+    } catch (e) {
+      if (e.name !== 'AbortError') toast('공유하지 못했습니다 — ' + e.message, { error: true });
+    }
+  });
+  $('capCopy').addEventListener('click', async () => {
+    if (!blob) return;
+    try { await copy(blob); toast('📋 복사했습니다 — 붙여넣기 하세요', { ms: 2000 }); }
+    catch { toast('이 브라우저는 이미지 복사를 막고 있어요 — 공유나 파일 저장을 쓰세요', { error: true }); }
+  });
+  $('capSave').addEventListener('click', () => {
+    if (!blob) return;
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  ts.subscribeVisibleLogicalRangeChange(place);
+  window.addEventListener('resize', place);
+  setTimeout(place, 0);
+  return { shoot, place };
 })();
 
 // ───────────────────────── 시작
