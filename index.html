@@ -352,6 +352,13 @@
   .nt-result b { color:var(--accel); margin-right:6px; }
   .nt-tf.sc-long { color:#26e0a5; border-color:rgba(38,224,165,0.5); }
   .nt-tf.sc-short { color:#f23645; border-color:rgba(242,54,69,0.5); }
+  .tr-up { color:#26e0a5; } .tr-dn { color:#f23645; } .tr-cl { color:#ffcc33; } .tr-in { color:#3d8bff; }
+  .tr-tab { width:100%; border-collapse:collapse; font-size:13.5px; margin:4px 0 10px; font-variant-numeric:tabular-nums; }
+  .tr-tab th { text-align:left; font-weight:400; color:var(--muted, #8b95a5); padding:4px 8px 4px 0; white-space:nowrap; }
+  .tr-tab td { padding:4px 14px 4px 0; }
+  .tr-fills { font:12.5px 'IBM Plex Mono', Menlo, monospace; margin-bottom:10px; border-top:1px solid rgba(255,255,255,0.08); padding-top:6px; }
+  .tr-fills div { display:grid; grid-template-columns:7.5em 5.5em 1fr auto; gap:6px; padding:2px 0; }
+  .tr-file { font-size:12px; color:var(--muted, #8b95a5); }
   .nt-card img, #noteSheet.sheet .nt-card img { max-height:none; }
   #noteSheet .panel:has(.nt-card) { max-width:min(600px, 94vw); }
   .nt-cm { margin-top:10px; font-size:13px; color:var(--text-dim); }
@@ -581,6 +588,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- 고칠 때마다 v를 올린다: 배포 직후 브라우저가 옛 app.js를 쓰지 않도록 -->
-<script src="app.js?v=19"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

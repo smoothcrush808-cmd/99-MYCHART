@@ -1687,6 +1687,8 @@ const MARK_COL = { '도전': '#ff9800', '고민': '#ffeb3b', '포기': '#f23645'
 const MARK_NONE = '#33d4ff';
 const SC_COL = { '대기': '#9aa4b2', '진입': '#3d8bff', '불참': '#ffcc33', '종료': '#26e0a5' }; // 시나리오 ◆ = 상태
 const isSc = n => n.kind === 'sc';
+const isTr = n => n.kind === 'tr'; // 비트겟 매매 — 가격 자리에 진입 ▲▼ · 청산 ✕ · 평단 잇는 점선
+const TR_UP = '#26e0a5', TR_DN = '#f23645', TR_IN = '#3d8bff', TR_OUT = '#ffcc33'; // 진입 파랑 · 청산 노랑 (봉 색과 안 겹치게)
 const isPhone = () => window.matchMedia('(max-width: 720px)').matches || wide.isOn();
 const notes = (() => {
   let on = !!store.get(PREF_KEY, {}).notes;
@@ -1757,10 +1759,61 @@ const notes = (() => {
     if (on) await ensure();
   }
 
+  // 매매: 평단(진입 → 청산) 점선 + 체결(주문 단위)마다 표시. 롱 진입 ▲ 초록 · 숏 진입 ▼ 빨강 · 청산 ✕
+  function drawTrades(ctx, w, h, k) {
+    const cy = p => series.priceToCoordinate(p);
+    const tx = ms => timeToX(msToChart(ms));
+    for (const n of list) {
+      if (!isTr(n)) continue;
+      const x0 = tx(n.t), x1 = tx(n.t2), y0 = cy(n.open), y1 = cy(n.close);
+      if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
+      if (Math.max(x0, x1) < -20 || Math.min(x0, x1) > w + 20) continue;
+      const sel = n.id === selId;
+      const col = n.net >= 0 ? TR_UP : TR_DN;
+      ctx.save();
+      ctx.strokeStyle = col; ctx.globalAlpha = sel ? 1 : 0.9; ctx.lineWidth = sel ? 2.5 : 2; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      for (const f of n.fills || []) {
+        const x = tx(f.t), y = cy(f.p); if (x == null || y == null) continue;
+        const r = 7 * k;
+        // 체결가에 짧은 가로 눈금 (봉 위에서도 자리가 보이게)
+        ctx.strokeStyle = 'rgba(10,14,20,0.9)'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(x - 11 * k, y); ctx.lineTo(x + 11 * k, y); ctx.stroke();
+        ctx.strokeStyle = f.open ? TR_IN : TR_OUT; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x - 11 * k, y); ctx.lineTo(x + 11 * k, y); ctx.stroke();
+        if (f.open) { // 삼각형: 롱은 체결가 아래에서 위를, 숏은 위에서 아래를 가리킨다 (눈금에서 조금 떨어뜨림)
+          const s = n.side === 'long' ? 1 : -1, g = 4 * k;
+          ctx.beginPath(); ctx.moveTo(x, y + s * g); ctx.lineTo(x - r, y + s * (g + r * 1.5)); ctx.lineTo(x + r, y + s * (g + r * 1.5)); ctx.closePath();
+          ctx.fillStyle = TR_IN; ctx.fill();
+          ctx.lineWidth = 1.6; ctx.strokeStyle = sel ? '#ffffff' : '#0a0e14'; ctx.stroke();
+          hits.push({ x, y: y + s * (g + r * 0.8), items: [n] });
+        } else {
+          const q = r * 0.75;
+          ctx.lineCap = 'round';
+          ctx.strokeStyle = 'rgba(10,14,20,0.9)'; ctx.lineWidth = 4.5;
+          ctx.beginPath(); ctx.moveTo(x - q, y - q); ctx.lineTo(x + q, y + q); ctx.moveTo(x + q, y - q); ctx.lineTo(x - q, y + q); ctx.stroke();
+          ctx.strokeStyle = sel ? '#ffffff' : TR_OUT; ctx.lineWidth = 2.2; ctx.stroke();
+          hits.push({ x, y, items: [n] });
+        }
+      }
+      // 순손익 꼬리표 — 마지막 청산 오른쪽
+      const t = `${n.side === 'long' ? '롱' : '숏'} ${n.net >= 0 ? '+' : ''}${n.net.toFixed(2)}`;
+      ctx.font = `600 ${Math.round(11 * k)}px 'IBM Plex Mono', Menlo, monospace`;
+      const tw = ctx.measureText(t).width, bx = x1 + 10 * k, bh = 16 * k, by = y1 - bh / 2;
+      ctx.fillStyle = 'rgba(10,14,20,0.85)'; ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, tw + 10 * k, bh, 4) : ctx.rect(bx, by, tw + 10 * k, bh); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(t, bx + 5 * k, y1 + 0.5);
+      hits.push({ x: bx + (tw + 10 * k) / 2, y: y1, items: [n] });
+      ctx.restore();
+    }
+  }
+
   // 점: 시간축 바로 위. 가까운 점(10px 안)은 하나로 묶고 개수를 적는다
   function draw(ctx, w, h) {
     hits = [];
     if (!on || !list.length || !S.bars.length) return;
+    drawTrades(ctx, w, h, isPhone() ? 1.25 : 1);
     const k = isPhone() ? 1.3 : 1;
     // 줄 둘: 아래 = MY 기록 ●, 그 위 = 시나리오 ◆
     const rows = [{ y: h - Math.round(9 * k), sc: false }, { y: h - Math.round(26 * k), sc: true }];
@@ -1768,7 +1821,7 @@ const notes = (() => {
     for (const row of rows) {
       let g = null;
       for (const n of list) {
-        if (isSc(n) !== row.sc) continue;
+        if (isTr(n) || isSc(n) !== row.sc) continue;
         const x = timeToX(msToChart(n.t));
         if (x == null || x < -6 || x > w + 6) continue;
         if (g && x - g.x0 < 10 * k) { g.items.push(n); g.x = (g.x0 + x) / 2; }
@@ -1830,10 +1883,38 @@ const notes = (() => {
   const markTag = m => (m ? `<span class="nt-mark" style="--mc:${MARK_COL[m] || MARK_NONE}">${esc(m)}</span>` : '');
   const kst = ms => { const d = new Date(ms + KST * 1000); return `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
   let shown = [];
+  const num = (v, d = 1) => Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const sgn = v => `<b class="${v >= 0 ? 'tr-up' : 'tr-dn'}">${v >= 0 ? '+' : ''}${num(v, 2)}</b>`;
+  const dur = ms => { const m = Math.round(ms / 60000); return m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`; };
+  function trHtml(n) {
+    const lg = n.side === 'long';
+    const moved = (lg ? 1 : -1) * (n.close - n.open);
+    return `
+      <article class="nt">
+        <div class="nt-head">
+          <span class="nt-time">💰 ${kst(n.t)} → ${kst(n.t2)}</span>
+          <span class="nt-tf sc-${lg ? 'long' : 'short'}">${lg ? '롱' : '숏'}</span>
+          ${n.type ? `<span class="nt-tf">${esc(n.type)}</span>` : ''}
+          ${n.state ? `<span class="nt-mark" style="--mc:${n.net >= 0 ? TR_UP : TR_DN}">${esc(n.state)}</span>` : ''}
+          <span class="spacer"></span>
+          <button class="nt-go" data-go="${esc(n.id)}" title="진입 시각을 차트 가운데로">이동</button>
+        </div>
+        <table class="tr-tab">
+          <tr><th>진입 평단</th><td>${num(n.open)}</td><th>청산 평단</th><td>${num(n.close)}</td></tr>
+          <tr><th>움직임</th><td>${sgn(moved)}</td><th>보유</th><td>${dur(n.t2 - n.t)}</td></tr>
+          <tr><th>수량</th><td>${n.qty} BTC${n.lev ? ` · ${esc(n.lev)}배` : ''}</td><th>가격 손익</th><td>${sgn(n.pnl)}</td></tr>
+          <tr><th>수수료·펀딩</th><td>${num(n.fee, 2)}</td><th>순손익</th><td>${sgn(n.net)} <small>USDT</small></td></tr>
+          ${n.sl || n.tp ? `<tr><th>손절</th><td>${esc(n.sl) || '—'}</td><th>익절</th><td>${esc(n.tp) || '—'}</td></tr>` : ''}
+        </table>
+        <div class="tr-fills">${(n.fills || []).map(f => `<div><span>${kst(f.t)}</span><span class="${f.open ? 'tr-in' : 'tr-cl'}">${f.open ? (lg ? '▲ 진입' : '▼ 진입') : '✕ 청산'}</span><span>${num(f.p)}</span><span>${f.q}</span></div>`).join('')}</div>
+        ${n.lessons && n.lessons.length ? `<div class="nt-result"><b>복기</b>${n.lessons.map(l => `<div>· ${esc(l)}</div>`).join('')}</div>` : ''}
+        ${n.file ? `<div class="tr-file">볼트 매매/${esc(n.file)}.md</div>` : ''}
+      </article>`;
+  }
   function show(items) {
     shown = items;
     selId = items[items.length - 1].id;
-    $('noteBody').innerHTML = items.map(n => isSc(n) ? `
+    $('noteBody').innerHTML = items.map(n => isTr(n) ? trHtml(n) : isSc(n) ? `
       <article class="nt">
         <div class="nt-head">
           <span class="nt-time">🎯 ${kst(n.t)}${n.est ? ' <em title="작성 시각이 비어 있어 노션 만든 시각">추정</em>' : ''}</span>

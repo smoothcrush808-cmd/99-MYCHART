@@ -109,6 +109,73 @@ def to_webp(path: Path, max_w: int | None = None) -> bytes:
     return out.getvalue()
 
 
+def frontmatter(path: Path) -> dict:
+    """매매·복기 md 머리의 `키: 값` 몇 개만 (따옴표 벗김, 목록은 [..] 그대로 파싱)."""
+    out = {}
+    lines = path.read_text(encoding='utf-8').splitlines()
+    if not lines or lines[0].strip() != '---':
+        return out
+    for ln in lines[1:]:
+        if ln.strip() == '---':
+            break
+        m = re.match(r'([^:\s][^:]*):\s*(.*)$', ln)
+        if not m:
+            continue
+        k, v = m.group(1).strip(), m.group(2).strip()
+        if v.startswith('['):
+            try:
+                v = [x for x in json.loads(v) if not str(x).startswith('[[')]
+            except Exception:
+                pass
+        elif len(v) >= 2 and v[0] == v[-1] == '"':
+            v = v[1:-1]
+        out[k] = v
+    return out
+
+
+def add_trades(notes: list) -> list:
+    """비트겟 청산 포지션(_raw/bitget) → 매매 표시. 체결은 주문 단위로 묶는다.
+    매매/·복기/ md는 진입가(±1)·방향으로 짝을 찾아 상태·손절·익절·교훈을 붙인다."""
+    vault = ROOT.parent.parent
+    raw = vault / '_raw' / 'bitget'
+    rd = lambda p: [json.loads(l) for l in p.read_text(encoding='utf-8').splitlines() if l.strip()] if p.exists() else []
+    poss, fills = rd(raw / 'positions.jsonl'), rd(raw / 'fills.jsonl')
+    mds = [(p, frontmatter(p)) for p in sorted((vault / '매매').glob('*.md'))]
+    revs = [frontmatter(p) | {'_file': p.stem} for p in sorted((vault / '복기').glob('*.md'))]
+    added = []
+    for ps in poss:
+        if ps.get('symbol') != 'BTCUSDT':
+            continue
+        side = ps['holdSide']                        # long | short
+        t0, t1 = int(ps['ctime']), int(ps['utime'])
+        o_side = 'buy' if side == 'long' else 'sell'
+        orders = {}
+        for f in fills:                              # 이 포지션 기간의 같은 방향 체결 (헤지 모드: 열기·닫기 모두 side가 포지션 쪽)
+            ft = int(f['cTime'])
+            if f.get('symbol', 'BTCUSDT') != 'BTCUSDT' or f['side'] != o_side or not (t0 - 2000 <= ft <= t1 + 2000):
+                continue
+            o = orders.setdefault(f['orderId'], {'t': ft, 'open': f['tradeSide'] == 'open', 'q': 0.0, 'pq': 0.0})
+            q = float(f['baseVolume']); o['q'] += q; o['pq'] += q * float(f['price']); o['t'] = min(o['t'], ft)
+        fl = sorted(({'t': o['t'], 'open': o['open'], 'p': round(o['pq'] / o['q'], 1), 'q': round(o['q'], 4)}
+                     for o in orders.values() if o['q']), key=lambda x: x['t'])
+        op = float(ps['openAvgPrice'])
+        dir_ko = '롱' if side == 'long' else '숏'
+        md = next((fm | {'_file': p.stem} for p, fm in mds
+                   if fm.get('방향') == dir_ko and abs(float(fm.get('진입가') or 0) - op) <= 1), {})
+        rv = next((r for r in revs if md and md['_file'] in str(r.get('관련매매', '')) or
+                   (r.get('매매일') == md.get('date') and r.get('방향') == dir_ko)), {}) if md else {}
+        fee = float(ps.get('openFee') or 0) + float(ps.get('closeFee') or 0) + float(ps.get('totalFunding') or 0)
+        n = {'id': 'tr-' + ps['positionId'], 'kind': 'tr', 't': t0, 't2': t1, 'side': side,
+             'open': op, 'close': float(ps['closeAvgPrice']), 'qty': float(ps.get('openTotalPos') or 0),
+             'pnl': round(float(ps.get('pnl') or 0), 2), 'net': round(float(ps.get('netProfit') or 0), 2),
+             'fee': round(fee, 2), 'fills': fl,
+             'state': md.get('상태', ''), 'type': md.get('유형', ''), 'sl': md.get('손절', ''), 'tp': str(md.get('익절', '')),
+             'lev': md.get('레버리지', ''), 'lessons': rv.get('교훈') if isinstance(rv.get('교훈'), list) else [],
+             'file': md.get('_file', '')}
+        notes.append(n); added.append(n)
+    return added
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', type=Path, default=SRC_DEFAULT)
@@ -184,6 +251,7 @@ def main() -> None:
              'result': (p.get('result') or '').strip()}
         attach(n, p.get('img'), 1080)
         notes.append(n); n_sc += 1
+    n_tr = len(add_trades(notes))
     removed = 0
     for f in img_dir.glob('*.bin'):
         if f.name not in keep:
@@ -199,8 +267,8 @@ def main() -> None:
     enc_path.write_bytes(json.dumps(env).encode('utf-8'))
     built_path.write_bytes(json.dumps(built, ensure_ascii=False, indent=1).encode('utf-8'))
     size = sum(f.stat().st_size for f in img_dir.glob('*.bin'))
-    est = sum(1 for n in notes if n['est'] and n.get('kind') != 'sc')
-    print(f'기록 {len(notes) - n_sc}개 (시각 추정 {est}) · 시나리오 {n_sc} · 캡쳐 새로 {n_new} · 지움 {removed} · 캡쳐 합계 {size / 1e6:.1f}MB')
+    est = sum(1 for n in notes if n.get('est') and not n.get('kind'))
+    print(f'기록 {len(notes) - n_sc - n_tr}개 (시각 추정 {est}) · 시나리오 {n_sc} · 매매 {n_tr} · 캡쳐 새로 {n_new} · 지움 {removed} · 캡쳐 합계 {size / 1e6:.1f}MB')
 
 
 if __name__ == '__main__':
