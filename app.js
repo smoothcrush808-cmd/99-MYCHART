@@ -174,6 +174,7 @@ async function fetchKlines(interval, { startTime, endTime, limit = PAGE } = {}) 
       return json.map(k => ({
         time: msToChart(k[0]),
         open: +k[1], high: +k[2], low: +k[3], close: +k[4],
+        v: +k[5], tb: +k[9], // 거래량, 테이커(시장가) 매수량 → 델타 계산용
       }));
     } catch (e) {
       errors.push(`${r.name}: ${e.message}`);
@@ -211,6 +212,7 @@ const chart = LWC.createChart($('chart'), {
     background: { type: 'solid', color: C.bg }, textColor: C.text,
     fontFamily: "'IBM Plex Mono', Menlo, Consolas, monospace", fontSize: 11,
     attributionLogo: false,
+    panes: { separatorColor: C.border, separatorHoverColor: 'rgba(122,147,173,0.25)' },
   },
   grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
   rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.08, bottom: 0.08 } },
@@ -234,6 +236,47 @@ const series = chart.addSeries(LWC.CandlestickSeries, {
 });
 const ts = chart.timeScale();
 
+// ───────────────────────── 델타 (봉마다 테이커 매수 − 테이커 매도, 캔들 아래 별도 칸)
+// 켜고 끄기만 하는 보조 표시. 기본은 꺼짐 (캔들로 읽는 게 우선)
+const barDelta = b => (Number.isFinite(b.v) && Number.isFinite(b.tb) ? 2 * b.tb - b.v : null);
+const fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(Math.abs(v) >= 100 ? 0 : 1);
+let deltaSeries = null;
+function deltaPoint(b) {
+  const d = barDelta(b);
+  if (d == null) return { time: b.time }; // 값 없는 봉은 빈칸
+  return { time: b.time, value: d, color: d >= 0 ? 'rgba(38,224,165,0.75)' : 'rgba(255,85,114,0.75)' };
+}
+function setBars(arr) {
+  series.setData(arr);
+  if (deltaSeries) deltaSeries.setData(arr.map(deltaPoint));
+}
+function updBar(b) {
+  series.update(b);
+  if (deltaSeries) deltaSeries.update(deltaPoint(b));
+}
+function setDelta(on) {
+  if (on && !deltaSeries) {
+    deltaSeries = chart.addSeries(LWC.HistogramSeries, {
+      priceFormat: { type: 'custom', formatter: fmtDelta, minMove: 0.01 },
+      lastValueVisible: false, priceLineVisible: false, base: 0,
+    }, 1);
+    const panes = chart.panes();
+    panes[0].setStretchFactor(1);
+    panes[1].setStretchFactor(0.28); // 차트 높이의 약 22%
+    deltaSeries.setData(S.bars.map(deltaPoint));
+    deltaSeries.createPriceLine({ price: 0, color: 'rgba(138,154,176,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+  } else if (!on && deltaSeries) {
+    chart.removeSeries(deltaSeries);
+    deltaSeries = null;
+    if (chart.panes().length > 1) chart.removePane(1);
+  }
+  const b = document.getElementById('deltaBtn');
+  if (b) b.classList.toggle('on', !!on);
+  store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), delta: !!on });
+}
+// 그림을 그리는 칸(맨 위 캔들 칸)의 높이 — 델타 칸이 있으면 그만큼 작다
+const mainPaneH = () => chart.panes()[0].getHeight();
+
 // ───────────────────────── 봉 데이터 상태 (봉 간격별로 메모리에 둔다)
 // bars: 연속된 구간 하나. atLatest: 오른쪽 끝이 지금 봉인가 (실시간 반영 여부)
 const cache = {};
@@ -254,7 +297,7 @@ function mergeBars(a, b) {
 function applyBars(newBars, shift = 0) {
   const r = ts.getVisibleLogicalRange();
   S.bars = newBars;
-  series.setData(newBars);
+  setBars(newBars);
   if (r && S.bars.length) ts.setVisibleLogicalRange({ from: r.from + shift, to: r.to + shift });
   saveCache();
   drawings.refresh();
@@ -278,7 +321,7 @@ async function loadLatest() {
     if (gen !== S.gen) return;
     S.atLatest = true; S.noMoreLeft = false;
     S.bars = bars;
-    series.setData(bars);
+    setBars(bars);
     ts.scrollToRealTime();
     saveCache();
     drawings.refresh();
@@ -374,7 +417,7 @@ async function jumpTo(ms, { mark = true, width: w = null } = {}) {
       if (!bars.length) { toast('그 시각의 봉이 없습니다', { error: true }); return; }
       S.noMoreLeft = false;
       S.bars = bars;
-      series.setData(bars);
+      setBars(bars);
       saveCache();
     } catch (e) {
       if (gen !== S.gen) return;
@@ -458,7 +501,7 @@ function switchInterval(iv, { centerMs = null, width = null } = {}) {
   S.bars = c ? c.bars : [];
   S.atLatest = c ? c.atLatest : false;
   S.noMoreLeft = c ? c.noMoreLeft : false;
-  series.setData(S.bars);
+  setBars(S.bars);
 
   if (centerMs != null) {
     jumpTo(centerMs, { mark: false, width });
@@ -492,7 +535,7 @@ function connectWs() {
     WSs.gotMsg = true;
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     const k = m.k; if (!k || k.i !== S.iv) return;
-    onLiveBar({ time: msToChart(k.t), open: +k.o, high: +k.h, low: +k.l, close: +k.c });
+    onLiveBar({ time: msToChart(k.t), open: +k.o, high: +k.h, low: +k.l, close: +k.c, v: +k.v, tb: +k.V });
   };
   ws.onerror = () => {};
   ws.onclose = () => {
@@ -517,7 +560,7 @@ function onLiveBar(bar) {
   if (bar.time === last.time) S.bars[S.bars.length - 1] = bar;
   else if (bar.time === last.time + sec()) S.bars.push(bar);
   else { backfill(); return; } // 빈 구간 생김 → REST로 메움
-  series.update(bar);
+  updBar(bar);
   updateLegend();
 }
 
@@ -563,6 +606,7 @@ function updateLegend() {
     `<span>L <b class="${cls}">${fmtPrice(bar.low)}</b></span>` +
     `<span>C <b class="${cls}">${fmtPrice(bar.close)}</b></span>` +
     `<span class="${cls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>` +
+    (deltaSeries && barDelta(bar) != null ? `<span>Δ <b class="${barDelta(bar) >= 0 ? 'u' : 'd'}">${fmtDelta(barDelta(bar))}</b></span>` : '') +
     (S.busy ? '<span class="busy">불러오는 중…</span>' : '');
 }
 
@@ -1158,13 +1202,14 @@ let multiTouch = false;
 let drag = null; // {id, pointerId, handle|null, start:{l,p}, orig}
 let pen = null;  // 그리는 중인 자유선 {pointerId, pts, last:[x,y]}
 function penPoint(x, y) {
+  if (y > mainPaneH()) return null; // 델타 칸으로는 그리지 않음
   const l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
   if (l == null || p == null || !S.bars.length) return null;
   return { t: Math.round(chartToMs(logicalToTimeExact(l))), p: Math.round(p * 100) / 100 };
 }
 function localXY(e) {
   const r = chartEl.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width - chart.priceScale('right').width(), h: r.height - ts.height() };
+  return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width - chart.priceScale('right').width(), h: mainPaneH() };
 }
 chartEl.addEventListener('pointerdown', e => {
   taps.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
@@ -1245,7 +1290,7 @@ const endTap = e => {
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8 || performance.now() - d.t > 600) return; // 끌기·길게 누르기는 탭 아님
   const r = chartEl.getBoundingClientRect();
   const x = e.clientX - r.left, y = e.clientY - r.top;
-  const paneW = r.width - chart.priceScale('right').width(), paneH = r.height - ts.height();
+  const paneW = r.width - chart.priceScale('right').width(), paneH = mainPaneH(); // 델타 칸 탭은 무시
   if (x < 0 || y < 0 || x > paneW || y > paneH) return; // 축 위 탭은 무시
   onTap(x, y);
 };
@@ -1289,6 +1334,7 @@ function onTap(x, y) {
 chart.subscribeCrosshairMove(param => {
   hoverT = param.time ?? null;
   updateLegend();
+  if (param.paneIndex) return; // 델타 칸 위에선 그림 미리보기·지우기 표시 안 함
   if (!tool || !param.point) { if (tool === 'erase') drawings.setHot(null); return; }
   if (tool === 'erase') {
     const hit = drawings.hitTest(param.point.x, param.point.y);
@@ -1524,6 +1570,7 @@ document.addEventListener('keydown', e => {
   if (map[k]) setTool(tool === map[k] ? null : map[k]);
   else if (k === 'g') $('gotoBtn').click();
   else if (k === 'c') capture.shoot();
+  else if (k === 'x') $('deltaBtn').click();
   else if (k === 'l') $('latestBtn').click();
   else if (k === '1') switchInterval('5m');
   else if (k === '2') switchInterval('15m');
@@ -2044,11 +2091,14 @@ const capture = (() => {
   const canShareFiles = f => { try { return !!(navigator.canShare && navigator.canShare({ files: [f] })); } catch { return false; } };
   const isTouch = matchMedia('(pointer: coarse)').matches;
 
-  // 버튼을 가격축·시간축 바로 안쪽에 둔다
+  // 버튼은 캔들 칸 왼쪽 아래(오래된 봉 쪽)에 둔다 — 오른쪽 아래는 최신 봉·델타를 가린다
   function place() {
-    const b = $('capBtn');
-    b.style.right = (chart.priceScale('right').width() + 8) + 'px';
-    b.style.bottom = (ts.height() + 8) + 'px';
+    const b = $('capBtn'), d = $('deltaBtn');
+    const below = $('chart').clientHeight - mainPaneH(); // 시간축 + 델타 칸
+    b.style.right = d.style.right = 'auto';
+    b.style.left = '8px';
+    d.style.left = '50px';
+    b.style.bottom = d.style.bottom = (below + 8) + 'px';
   }
 
   // 차트(그림 포함) + 위쪽 정보 띠를 한 장으로. 폭이 좁으면 정보 띠를 두 줄로
@@ -2146,8 +2196,12 @@ const capture = (() => {
   return { shoot, place };
 })();
 
+// 델타 스위치
+$('deltaBtn').addEventListener('click', () => { setDelta(!deltaSeries); updateLegend(); requestAnimationFrame(() => setTimeout(capture.place, 0)); });
+
 // ───────────────────────── 시작
 const prefs = store.get(PREF_KEY, {});
+if (prefs.delta) setDelta(true);
 wantWide = !!prefs.wide;
 wide.apply(wantWide);
 S.iv = IVS[prefs.iv] ? prefs.iv : '5m';
@@ -2158,5 +2212,5 @@ connectWs();
 sync.syncNow();
 
 // 디버그·테스트용
-window.__psych = { S, chart, series, drawings, bookmarks, sync, notes, jumpTo, switchInterval, wide };
+window.__psych = { S, chart, series, drawings, bookmarks, sync, notes, jumpTo, switchInterval, wide, setDelta, getDelta: () => deltaSeries };
 })();
