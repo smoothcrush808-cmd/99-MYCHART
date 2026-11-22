@@ -678,6 +678,47 @@ const toolWidths = Object.fromEntries(WIDTH_TYPES.map(t => [t, LINE_DEFAULT]));
 for (const [k, v] of Object.entries(store.get(PREF_KEY, {}).widths || {})) if (k in toolWidths && LINE_WIDTHS.some(x => x.w === v)) toolWidths[k] = v;
 let toolTextSize = (() => { const v = store.get(PREF_KEY, {}).textSize; return TEXT_SIZES.some(x => x.px === v) ? v : TEXT_DEFAULT; })();
 const TEXT_MAX = 60;
+// ───────────────────────── 포지션 계산 (진입 전 손익 미리 보기 · 비트겟 USDT 선물 격리 기준)
+// 증거금 = 시드 × 비중, 포지션 규모 = 증거금 × 배율, 수량 = 규모 ÷ 진입가.
+// 청산가는 근사치: 격리 증거금 + 미실현손익 = 유지증거금(규모 × 유지증거금률)이 되는 가격.
+const POS_DEFAULT = { seed: 1000, w: 20, lev: 10, fee: 0.06, mmr: 0.5, side: 'long' };
+const posPrefs = (() => {
+  const v = { ...POS_DEFAULT, ...(store.get(PREF_KEY, {}).pos || {}) };
+  for (const k of ['seed', 'w', 'lev', 'fee', 'mmr']) if (!Number.isFinite(+v[k]) || +v[k] < 0) v[k] = POS_DEFAULT[k];
+  if (v.side !== 'short') v.side = 'long';
+  return v;
+})();
+const POS_C = { tp: '#26e0a5', sl: '#ff5572', e: '#e6edf3', add: '#ffcc33' };
+function savePosPrefs() { store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), pos: posPrefs }); }
+
+function calcPos(d) {
+  const dir = d.side === 'short' ? -1 : 1;
+  const fee = (Number.isFinite(d.fee) ? d.fee : posPrefs.fee) / 100;
+  const mmr = (Number.isFinite(d.mmr) ? d.mmr : posPrefs.mmr) / 100;
+  const legs = [{ p: d.e, w: d.w }, ...(d.adds || [])].map(a => {
+    const margin = d.seed * a.w / 100, notional = margin * d.lev;
+    return { p: a.p, w: a.w, margin, notional, qty: a.p > 0 ? notional / a.p : 0 };
+  });
+  const sum = (arr, k) => arr.reduce((acc, x) => acc + x[k], 0);
+  function stats(ls) {
+    const Q = sum(ls, 'qty'), M = sum(ls, 'margin'), N = sum(ls, 'notional');
+    const avg = Q ? N / Q : d.e;
+    // 그 가격까지 가서 전부 정리했을 때 손익 (진입·청산 수수료 포함)
+    const pnlAt = X => dir * ls.reduce((acc, a) => acc + a.qty * (X - a.p), 0) - (N * fee + Q * X * fee);
+    const liq = !Q ? NaN : dir > 0 ? (Q * avg - M) / (Q * (1 - mmr)) : (M + Q * avg) / (Q * (1 + mmr));
+    const tp = pnlAt(d.tp), sl = pnlAt(d.sl);
+    return { Q, M, N, avg, liq, tp, sl, tpRoe: M ? tp / M * 100 : 0, slRoe: M ? sl / M * 100 : 0,
+      tpAcc: tp / d.seed * 100, slAcc: sl / d.seed * 100,
+      tpPct: (d.tp / avg - 1) * 100 * dir, slPct: (d.sl / avg - 1) * 100 * dir,
+      rr: Math.abs(d.sl - avg) > 0 ? Math.abs(d.tp - avg) / Math.abs(d.sl - avg) : 0,
+      // 손절 전에 청산되는가 (롱: 청산가가 손절가보다 위, 숏: 아래)
+      liqFirst: dir > 0 ? liq >= d.sl : liq <= d.sl };
+  }
+  return { dir, legs, all: stats(legs), first: stats(legs.slice(0, 1)), totalW: sum(legs, 'w') };
+}
+const fmtUsd = v => (v >= 0 ? '+' : '−') + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 1 });
+const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%';
+
 const drawings = (() => {
   const stored = store.get(STORE_KEY, { drawings: [] }) || {};
   let list = (stored.drawings || []).filter(valid);
@@ -710,6 +751,8 @@ const drawings = (() => {
       case 'vline': return num(d.t);
       case 'ray': case 'dot': return num(d.p) && num(d.t);
       case 'box': return num(d.p) && num(d.t) && num(d.p2) && num(d.t2);
+      case 'pos': return (d.side === 'long' || d.side === 'short') && [d.e, d.sl, d.tp, d.t, d.t2, d.w, d.lev, d.seed].every(num)
+        && d.seed > 0 && d.lev > 0 && (!d.adds || (Array.isArray(d.adds) && d.adds.length <= 10 && d.adds.every(a => a && num(a.p) && num(a.w))));
       case 'pen': return Array.isArray(d.pts) && d.pts.length >= 2 && d.pts.length <= 2000 && d.pts.every(q => q && num(q.t) && num(q.p));
       case 'text': return num(d.p) && num(d.t) && typeof d.text === 'string' && d.text.trim().length > 0 && d.text.length <= 200;
       default: return false;
@@ -743,6 +786,17 @@ const drawings = (() => {
         backColor: () => (hot === d.id ? C.erase : colorOf(d)),
       };
     });
+    // 포지션: 진입(평단) · 손절 · 목표 가격
+    for (const d of list.filter(x => x.type === 'pos')) {
+      for (const [key, col] of [['tp', POS_C.tp], ['sl', POS_C.sl], ['e', POS_C.e]]) {
+        axisViews.push({
+          coordinate: () => series.priceToCoordinate(key === 'e' ? calcPos(d).all.avg : d[key]) ?? -100,
+          text: () => fmtAxis(key === 'e' ? calcPos(d).all.avg : d[key]),
+          textColor: () => (key === 'e' ? C.bg : '#ffffff'),
+          backColor: () => (hot === d.id ? C.erase : col),
+        });
+      }
+    }
   }
 
   const cx = d => timeToX(msToChart(d.t));
@@ -773,7 +827,74 @@ const drawings = (() => {
   // 자유선 점들 → 화면 좌표
   const penXY = d => d.pts.map(q => [timeToX(msToChart(q.t)), cy(q.p)]).filter(([x, y]) => x != null && y != null);
 
+  // 포지션 박스 그리기: 목표 칸(초록) · 손절 칸(빨강) · 진입선 · 추가 진입선 · 청산선 + 숫자
+  function posLabel(ctx, x, y, lines, col, below, paneW) {
+    ctx.font = "600 11px 'Pretendard Variable', -apple-system, sans-serif";
+    const lh = 14, w = Math.max(...lines.map(t => ctx.measureText(t).width)) + 10, hh = lines.length * lh + 4;
+    x = Math.max(2, Math.min(x, paneW - w - 2)); // 화면(가격축 왼쪽) 안에 들어오게
+    const top = below ? y + 3 : y - hh - 3;
+    ctx.fillStyle = 'rgba(10,14,20,0.82)';
+    ctx.fillRect(x, top, w, hh);
+    ctx.textBaseline = 'middle';
+    lines.forEach((t, i) => { ctx.fillStyle = i === 0 ? col : '#c9d3df'; ctx.fillText(t, x + 5, top + 2 + lh * i + lh / 2); });
+  }
+  function drawPos(ctx, d, w, h, isHot) {
+    const x1 = cx(d), x2r = timeToX(msToChart(d.t2));
+    if (x1 == null || x2r == null) return;
+    const l = Math.min(x1, x2r), r = Math.max(x1, x2r);
+    const R = calcPos(d), A = R.all, F = R.first;
+    const yE = cy(A.avg), yS = cy(d.sl), yT = cy(d.tp), yE1 = cy(d.e);
+    if ([yE, yS, yT, yE1].some(v => v == null)) return;
+    ctx.save();
+    ctx.fillStyle = isHot ? 'rgba(255,85,114,0.18)' : 'rgba(38,224,165,0.16)';
+    ctx.fillRect(l, Math.min(yE, yT), r - l, Math.abs(yT - yE));
+    ctx.fillStyle = isHot ? 'rgba(255,85,114,0.18)' : 'rgba(255,85,114,0.16)';
+    ctx.fillRect(l, Math.min(yE, yS), r - l, Math.abs(yS - yE));
+    const hl = (y, col, dash, lw2 = 1.5) => {
+      ctx.strokeStyle = col; ctx.lineWidth = lw2; ctx.setLineDash(dash);
+      ctx.beginPath(); ctx.moveTo(l, Math.round(y) + 0.5); ctx.lineTo(r, Math.round(y) + 0.5); ctx.stroke();
+    };
+    hl(yT, POS_C.tp, []); hl(yS, POS_C.sl, []);
+    hl(yE1, POS_C.e, []);
+    (d.adds || []).forEach(a => { const ya = cy(a.p); if (ya != null) hl(ya, POS_C.add, [5, 3]); });
+    if (d.adds && d.adds.length) hl(yE, POS_C.e, [2, 3], 1); // 평단
+    const yL = cy(A.liq);
+    if (yL != null && Number.isFinite(A.liq)) hl(yL, A.liqFirst ? C.erase : 'rgba(255,85,114,0.45)', [2, 4], 1);
+    ctx.setLineDash([]);
+
+    const lx = Math.max(4, l + 12); // 왼쪽 끝 동그라미를 비켜서
+    const dirName = d.side === 'short' ? '숏' : '롱';
+    const multi = d.adds && d.adds.length > 0;
+    const upT = d.side === 'short' ? false : true; // 롱: 목표가 위
+    posLabel(ctx, lx, yT, [
+      `목표 ${fmtAxis(d.tp)}  ${fmtPct(A.tpPct)}`,
+      `${fmtUsd(A.tp)} USDT · 계좌 ${fmtPct(A.tpAcc)} · ROE ${fmtPct(A.tpRoe)}`,
+      ...(multi ? [`1차만 체결: ${fmtUsd(F.tp)} USDT`] : []),
+    ], POS_C.tp, !upT, w);
+    posLabel(ctx, lx, yS, [
+      `손절 ${fmtAxis(d.sl)}  ${fmtPct(A.slPct)}`,
+      `${fmtUsd(A.sl)} USDT · 계좌 ${fmtPct(A.slAcc)} · ROE ${fmtPct(A.slRoe)}`,
+      ...(multi ? [`1차만 체결: ${fmtUsd(F.sl)} USDT`] : []),
+    ], POS_C.sl, upT, w);
+    posLabel(ctx, lx, yE + (upT ? -2 : 2), [
+      `${dirName} ${d.lev}x · 비중 ${+R.totalW.toFixed(1)}% · 손익비 1 : ${A.rr.toFixed(2)}`,
+      `${multi ? `평단 ${fmtAxis(A.avg)} (${R.legs.length}회) · ` : ''}${A.Q.toFixed(4)} BTC · 증거금 ${A.M.toFixed(0)}`,
+      `청산 ≈ ${Number.isFinite(A.liq) ? fmtAxis(A.liq) : '-'}${A.liqFirst ? ' ⚠ 손절보다 먼저 청산' : ''}`,
+    ], A.liqFirst ? C.erase : '#e6edf3', !upT, w);
+    (d.adds || []).forEach((a, i) => {
+      const ya = cy(a.p); if (ya == null) return;
+      ctx.font = "600 10px 'Pretendard Variable', -apple-system, sans-serif";
+      const t = `추가${i + 1} ${fmtAxis(a.p)} · ${a.w}%`;
+      const tw = ctx.measureText(t).width;
+      const ax = Math.max(2, Math.min(l + 30, w - tw - 10)); // 추가진입 동그라미(l+18) 오른쪽
+      ctx.fillStyle = 'rgba(10,14,20,0.82)'; ctx.fillRect(ax, ya - 8, tw + 8, 15);
+      ctx.fillStyle = POS_C.add; ctx.textBaseline = 'middle'; ctx.fillText(t, ax + 4, ya);
+    });
+    ctx.restore();
+  }
+
   function drawOne(ctx, d, w, h, isHot, ghost = false) {
+    if (d.type === 'pos') return drawPos(ctx, d, w, h, isHot);
     const lw = widthOf(d);
     if (d.type === 'pen') {
       const xy = penXY(d); if (xy.length < 2) return;
@@ -852,6 +973,16 @@ const drawings = (() => {
   // 수정 손잡이: 박스는 네 꼭짓점, 레이·점·글은 시작점, 수평선·수직선은 화면 가운데 한 점
   function handlesOf(d, w, h) {
     if (d.type === 'pen') return []; // 자유선은 통째로 이동만
+    if (d.type === 'pos') {
+      // 진입·손절·목표·추가진입은 왼쪽 끝 동그라미로 가격만, 오른쪽 끝 동그라미로 박스 길이
+      const x1 = cx(d), x2 = timeToX(msToChart(d.t2));
+      if (x1 == null || x2 == null) return [];
+      const l = Math.min(x1, x2), r = Math.max(x1, x2);
+      const hs = [['tp', d.tp], ['sl', d.sl], ['e', d.e]].map(([k, p]) => ({ x: l, y: cy(p), tk: null, pk: k }));
+      (d.adds || []).forEach((a, i) => hs.push({ x: l + 18, y: cy(a.p), tk: null, pk: null, add: i }));
+      hs.push({ x: r, y: cy(calcPos(d).all.avg), tk: x2 >= x1 ? 't2' : 't', pk: null });
+      return hs.filter(q => q.y != null);
+    }
     if (d.type === 'vline') { const x = cx(d); return x == null ? [] : [{ x, y: h / 2, tk: 't', pk: null }]; }
     const y = cy(d.p); if (y == null) return [];
     if (d.type === 'hline') return [{ x: w / 2, y, tk: null, pk: 'p' }];
@@ -883,6 +1014,16 @@ const drawings = (() => {
   function hitTest(px, py, tol = 16, only = null) {
     let best = null, bestD = tol;
     for (const d of only ? list.filter(x => x.id === only) : list) {
+      if (d.type === 'pos') {
+        const x1 = cx(d), x2 = timeToX(msToChart(d.t2));
+        const ys = [cy(d.tp), cy(d.sl)];
+        if (x1 == null || x2 == null || ys.some(v => v == null)) continue;
+        const l = Math.min(x1, x2), r = Math.max(x1, x2), t = Math.min(...ys), b = Math.max(...ys);
+        const dx = Math.max(l - px, 0, px - r), dy = Math.max(t - py, 0, py - b);
+        const dd = Math.hypot(dx, dy);
+        if (dd < bestD) { bestD = dd; best = d; }
+        continue;
+      }
       if (d.type === 'pen') {
         const xy = penXY(d);
         for (let i = 1; i < xy.length; i++) {
@@ -949,7 +1090,7 @@ const drawings = (() => {
     refresh: () => requestUpdate(),
     all: () => list.slice(),
     count: () => list.length,
-    add(d) { snapshot(); list.push({ id: newId(), ...d }); persist(); },
+    add(d) { snapshot(); const id = newId(); list.push({ id, ...d }); persist(); return id; },
     remove(id) { snapshot(); list = list.filter(d => d.id !== id); hot = null; if (sel === id) sel = null; persist(); },
     snapshot,
     undo() {
@@ -1000,6 +1141,10 @@ const drawings = (() => {
         if (d.type === 'text') { clean.text = d.text; if (Number.isFinite(d.s)) clean.s = d.s; }
         if (LINE_WIDTHS.some(x => x.w === d.w)) clean.w = d.w;
         if (d.type === 'pen') clean.pts = d.pts.map(q => ({ t: q.t, p: q.p }));
+        if (d.type === 'pos') {
+          for (const k of ['side', 'e', 'sl', 'tp', 't2', 'w', 'lev', 'seed', 'fee', 'mmr']) if (d[k] != null) clean[k] = d[k];
+          clean.adds = (d.adds || []).map(a => ({ p: a.p, w: a.w }));
+        }
         list.push(clean); have.add(d.id); added++;
       }
       if (!added) { history.pop(); onHistory(history.length); }
@@ -1021,6 +1166,9 @@ const HINTS = {
   hline: '수평선 — 가격 위치를 탭하세요',
   vline: '수직선 — 시각(봉) 위치를 탭하세요',
   pen: '자유선 — 끌어서 그리세요 (여러 획 가능)',
+  pos: '포지션 — 진입가를 탭하세요',
+  posAdd: '추가 진입 — 가격을 탭하세요 (물타기·불타기)',
+  editPos: '선을 끌어 가격 조절',
   dot: '점 — 찍을 위치를 탭하세요',
   ray: '레이 — 시작점을 탭하세요 (오른쪽으로 뻗음)',
   box: '박스 — 첫 꼭짓점을 탭하세요',
@@ -1060,9 +1208,11 @@ function showHint(text) {
 function renderSwatches() {
   const box = $('swatches');
   const sd = drawings.getSel() && drawings.get(drawings.getSel());
-  const type = sd ? sd.type : (tool && tool !== 'erase' ? tool : null);
+  const type0 = sd ? sd.type : (tool && tool !== 'erase' ? tool : null);
+  renderPosBar(type0 === 'pos' ? (sd || null) : undefined); // 추가 진입을 찍는 동안엔 숨김
+  const type = type0 === 'pos' || type0 === 'posAdd' ? null : type0; // 포지션엔 색·굵기 없음
   box.hidden = !type;
-  if (!type) return;
+  if (!type) { renderSizes(null); renderWidths(null); return; }
   const cur = sd ? colorOf(sd) : toolColors[type];
   box.innerHTML = '';
   for (const c of PALETTE) {
@@ -1131,6 +1281,71 @@ function renderSizes(type, sd) {
   }
 }
 
+// 포지션 도구 막대: 롱/숏 · 추가 진입 · 설정 (sd = 선택한 포지션, 없으면 새로 그릴 기본값)
+function renderPosBar(sd) {
+  const bar = $('posBar');
+  bar.hidden = sd === undefined;
+  if (bar.hidden) return;
+  const side = sd ? sd.side : posPrefs.side;
+  bar.innerHTML = '';
+  const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'sz' + (cls ? ' ' + cls : ''); b.textContent = label; b.addEventListener('click', fn); bar.appendChild(b); return b; };
+  mk('롱', side === 'long' ? 'on long' : '', () => setSide('long'));
+  mk('숏', side === 'short' ? 'on short' : '', () => setSide('short'));
+  if (sd) mk('+ 추가 진입', '', () => { posAddFor = sd.id; setTool('posAdd'); });
+  mk('⚙ 설정', '', () => openPosModal(sd ? sd.id : null));
+}
+function setSide(side) {
+  const sd = drawings.getSel() && drawings.get(drawings.getSel());
+  if (sd && sd.type === 'pos') {
+    if (sd.side !== side) {
+      // 진입가 기준으로 손절·목표를 뒤집는다
+      drawings.snapshot();
+      drawings.patch(sd.id, { side, sl: Math.round((2 * sd.e - sd.sl) * 100) / 100, tp: Math.round((2 * sd.e - sd.tp) * 100) / 100 });
+      drawings.save();
+    }
+  }
+  posPrefs.side = side; savePosPrefs();
+  renderSwatches();
+}
+
+// 포지션 설정 창: 시드 · 비중 · 배율 · 수수료 · 유지증거금률 (+ 선택한 포지션의 추가 진입 비중)
+let posModalFor = null;
+function openPosModal(id) {
+  posModalFor = id;
+  const d = id && drawings.get(id);
+  const v = d ? { seed: d.seed, w: d.w, lev: d.lev, fee: d.fee ?? posPrefs.fee, mmr: d.mmr ?? posPrefs.mmr } : posPrefs;
+  for (const k of ['seed', 'w', 'lev', 'fee', 'mmr']) $('pos_' + k).value = v[k];
+  const box = $('posAdds');
+  box.innerHTML = '';
+  (d && d.adds || []).forEach((a, i) => {
+    const row = document.createElement('div'); row.className = 'pos-add-row';
+    row.innerHTML = `<span>추가${i + 1} · ${fmtAxis(a.p)}</span><input type="number" inputmode="decimal" step="any" min="0" value="${a.w}" data-add="${i}"><span>%</span><button class="bm-del" data-del="${i}" title="이 추가 진입 삭제">✕</button>`;
+    box.appendChild(row);
+  });
+  box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => b.closest('.pos-add-row').remove()));
+  $('posAddsWrap').hidden = !d;
+  $('posModalTitle').textContent = d ? '이 포지션 설정' : '포지션 기본 설정';
+  openModal('posModal');
+}
+$('posApply').addEventListener('click', () => {
+  const num = k => +$('pos_' + k).value;
+  const v = { seed: num('seed'), w: num('w'), lev: num('lev'), fee: num('fee'), mmr: num('mmr') };
+  if (!(v.seed > 0) || !(v.w > 0) || !(v.lev >= 1) || !(v.fee >= 0) || !(v.mmr >= 0)) { toast('숫자를 확인하세요 (시드·비중·배율은 0보다 커야 함)', { error: true }); return; }
+  Object.assign(posPrefs, v); savePosPrefs(); // 다음 포지션의 기본값도 같이
+  const d = posModalFor && drawings.get(posModalFor);
+  if (d) {
+    const rows = [...$('posAdds').querySelectorAll('input[data-add]')];
+    const adds = rows.map(inp => ({ p: d.adds[+inp.dataset.add].p, w: +inp.value })).filter(a => a.w > 0);
+    drawings.snapshot();
+    drawings.patch(d.id, { ...v, adds });
+    drawings.save();
+    const tw = v.w + adds.reduce((acc, a) => acc + a.w, 0);
+    if (tw > 100) toast(`비중 합계가 ${tw}% — 시드보다 많아요`, { error: true, ms: 4000 });
+  }
+  closeModal($('posModal'));
+  renderSwatches();
+});
+
 // 그림 선택(수정 모드): 선택 중엔 차트 끌기·확대를 잠가서 손가락이 그림만 움직이게 한다
 function select(id) {
   if (id === drawings.getSel()) return;
@@ -1141,6 +1356,7 @@ function select(id) {
 }
 function editHint() {
   const d = drawings.getSel() && drawings.get(drawings.getSel());
+  if (d && d.type === 'pos') return HINTS.editPos;
   return d && d.type === 'box' ? HINTS.edit : HINTS.editText; // 크기 조절은 박스만
 }
 
@@ -1248,7 +1464,11 @@ chartEl.addEventListener('pointermove', e => {
   if (!drag.moved) drawings.snapshot(); // 끌기 한 번 = 되돌리기 한 단계
   drag.moved = true;
   const o = drag.orig, round = v => Math.round(v * 100) / 100;
-  if (drag.handle) {
+  if (drag.handle && drag.handle.add != null) {
+    // 포지션의 추가 진입선
+    const adds = o.adds.map((a, i) => (i === drag.handle.add ? { ...a, p: round(p) } : a));
+    drawings.patch(drag.id, { adds });
+  } else if (drag.handle) {
     // 손잡이: 그 꼭짓점만 손가락 위치로
     const f = drag.handle.pk ? { [drag.handle.pk]: round(p) } : {};
     if (drag.handle.tk) f[drag.handle.tk] = chartToMs(logicalToTime(l));
@@ -1260,6 +1480,10 @@ chartEl.addEventListener('pointermove', e => {
     const f = o.p != null ? { p: round(o.p + dp) } : {};
     if (o.t != null) f.t = shiftT(o.t);
     if (o.type === 'box') { f.p2 = round(o.p2 + dp); f.t2 = shiftT(o.t2); }
+    if (o.type === 'pos') {
+      Object.assign(f, { e: round(o.e + dp), sl: round(o.sl + dp), tp: round(o.tp + dp), t2: shiftT(o.t2) });
+      f.adds = (o.adds || []).map(a => ({ ...a, p: round(a.p + dp) }));
+    }
     if (o.type === 'pen') {
       // 자유선은 봉에 붙이지 않고 그대로 평행 이동
       const dlx = l - drag.start.l;
@@ -1297,6 +1521,7 @@ const endTap = e => {
 chartEl.addEventListener('pointerup', endTap, true);
 chartEl.addEventListener('pointercancel', endTap, true);
 
+let posAddFor = null; // 추가 진입을 넣을 포지션 id
 function onTap(x, y) {
   if (tool === 'pen') return;
   if (!tool) {
@@ -1322,6 +1547,30 @@ function onTap(x, y) {
   else if (tool === 'dot') drawings.add({ type: 'dot', t: pt.t, p: pt.p, c, w });
   else if (tool === 'ray') drawings.add({ type: 'ray', t: pt.t, p: pt.p, c, w });
   else if (tool === 'text') { setTool(null); openTextModal({ mode: 'new', pt, c }, ''); return; }
+  else if (tool === 'pos') {
+    // 진입가에 박스: 기본 손절 거리 = 지금 화면 가격 폭의 12% (화면 안에 보이게), 목표는 손익비 2
+    const dir = posPrefs.side === 'short' ? -1 : 1, round = v => Math.round(v * 100) / 100;
+    const top = series.coordinateToPrice(0), bot = series.coordinateToPrice(mainPaneH());
+    const dist = top != null && bot != null ? Math.abs(top - bot) * 0.12 : pt.p * 0.005;
+    const sl = round(pt.p - dir * dist), tp = round(pt.p + 2 * (pt.p - sl));
+    const r = ts.getVisibleLogicalRange();
+    const span = Math.max(10, Math.round(r ? (r.to - r.from) * 0.3 : 30));
+    const t2 = chartToMs(logicalToTime(timeToLogical(msToChart(pt.t)) + span));
+    const id = drawings.add({ type: 'pos', side: posPrefs.side, t: pt.t, t2, e: pt.p, sl, tp,
+      w: posPrefs.w, lev: posPrefs.lev, seed: posPrefs.seed, fee: posPrefs.fee, mmr: posPrefs.mmr, adds: [] });
+    setTool(null); select(id);
+    return;
+  } else if (tool === 'posAdd') {
+    const id = posAddFor, d = id && drawings.get(id);
+    setTool(null);
+    if (d) {
+      drawings.snapshot();
+      drawings.patch(id, { adds: [...(d.adds || []), { p: pt.p, w: d.w }] });
+      drawings.save();
+      select(id);
+    }
+    return;
+  }
   else if (tool === 'box') {
     const first = drawings.getPending();
     if (!first) { drawings.setPending(pt); showHint(HINTS.box2); return; }
@@ -1565,7 +1814,7 @@ document.addEventListener('keydown', e => {
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && drawings.getSel()) { $('hintDelete').click(); return; }
   if (document.querySelector('.backdrop.show')) return;
-  const map = { h: 'hline', v: 'vline', b: 'box', d: 'dot', r: 'ray', t: 'text', p: 'pen', e: 'erase' };
+  const map = { h: 'hline', v: 'vline', b: 'box', d: 'dot', r: 'ray', t: 'text', p: 'pen', e: 'erase', o: 'pos' };
   const k = e.key.toLowerCase();
   if (map[k]) setTool(tool === map[k] ? null : map[k]);
   else if (k === 'g') $('gotoBtn').click();
@@ -2212,5 +2461,5 @@ connectWs();
 sync.syncNow();
 
 // 디버그·테스트용
-window.__psych = { S, chart, series, drawings, bookmarks, sync, notes, jumpTo, switchInterval, wide, setDelta, getDelta: () => deltaSeries };
+window.__psych = { calcPos, posPrefs, S, chart, series, drawings, bookmarks, sync, notes, jumpTo, switchInterval, wide, setDelta, getDelta: () => deltaSeries };
 })();
