@@ -688,7 +688,7 @@ const posPrefs = (() => {
   if (v.side !== 'short') v.side = 'long';
   return v;
 })();
-const POS_C = { tp: '#26e0a5', sl: '#ff5572', e: '#e6edf3', add: '#ffcc33' };
+const POS_C = { tp: '#26e0a5', sl: '#ff5572', e: '#e6edf3', add: '#ffcc33', r2: '#33d4ff' };
 function savePosPrefs() { store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), pos: posPrefs }); }
 
 function calcPos(d) {
@@ -860,6 +860,17 @@ const drawings = (() => {
     if (d.adds && d.adds.length) hl(yE, POS_C.e, [2, 3], 1); // 평단
     const yL = cy(A.liq);
     if (yL != null && Number.isFinite(A.liq)) hl(yL, A.liqFirst ? C.erase : 'rgba(255,85,114,0.45)', [2, 4], 1);
+    // 2R: 평단에서 손절까지 거리(1R)의 두 배만큼 목표 쪽 — 손익비 2:1 지점
+    const p2R = A.avg + 2 * (A.avg - d.sl), y2R = cy(p2R);
+    if (y2R != null) {
+      hl(y2R, POS_C.r2, [6, 4], 1.2);
+      ctx.setLineDash([]);
+      ctx.font = "700 10px 'Pretendard Variable', -apple-system, sans-serif";
+      const t = `2R ${fmtAxis(p2R)}`, tw = ctx.measureText(t).width;
+      const rx = Math.max(2, Math.min(r - tw - 10, w - tw - 10));
+      ctx.fillStyle = 'rgba(10,14,20,0.82)'; ctx.fillRect(rx, y2R - 8, tw + 8, 15);
+      ctx.fillStyle = POS_C.r2; ctx.textBaseline = 'middle'; ctx.fillText(t, rx + 4, y2R);
+    }
     ctx.setLineDash([]);
 
     const lx = Math.max(4, l + 12); // 왼쪽 끝 동그라미를 비켜서
