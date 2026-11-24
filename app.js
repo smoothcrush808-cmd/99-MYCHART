@@ -236,45 +236,11 @@ const series = chart.addSeries(LWC.CandlestickSeries, {
 });
 const ts = chart.timeScale();
 
-// ───────────────────────── 델타 (봉마다 테이커 매수 − 테이커 매도, 캔들 아래 별도 칸)
-// 켜고 끄기만 하는 보조 표시. 기본은 꺼짐 (캔들로 읽는 게 우선)
+// 봉마다 테이커 매수 − 테이커 매도 (관심도 V의 색에 쓴다)
 const barDelta = b => (Number.isFinite(b.v) && Number.isFinite(b.tb) ? 2 * b.tb - b.v : null);
-const fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(Math.abs(v) >= 100 ? 0 : 1);
-let deltaSeries = null;
-function deltaPoint(b) {
-  const d = barDelta(b);
-  if (d == null) return { time: b.time }; // 값 없는 봉은 빈칸
-  return { time: b.time, value: d, color: d >= 0 ? 'rgba(38,224,165,0.75)' : 'rgba(255,85,114,0.75)' };
-}
-function setBars(arr) {
-  series.setData(arr);
-  if (deltaSeries) deltaSeries.setData(arr.map(deltaPoint));
-}
-function updBar(b) {
-  series.update(b);
-  if (deltaSeries) deltaSeries.update(deltaPoint(b));
-}
-function setDelta(on) {
-  if (on && !deltaSeries) {
-    deltaSeries = chart.addSeries(LWC.HistogramSeries, {
-      priceFormat: { type: 'custom', formatter: fmtDelta, minMove: 0.01 },
-      lastValueVisible: false, priceLineVisible: false, base: 0,
-    }, 1);
-    const panes = chart.panes();
-    panes[0].setStretchFactor(1);
-    panes[1].setStretchFactor(0.28); // 차트 높이의 약 22%
-    deltaSeries.setData(S.bars.map(deltaPoint));
-    deltaSeries.createPriceLine({ price: 0, color: 'rgba(138,154,176,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
-  } else if (!on && deltaSeries) {
-    chart.removeSeries(deltaSeries);
-    deltaSeries = null;
-    if (chart.panes().length > 1) chart.removePane(1);
-  }
-  const b = document.getElementById('deltaBtn');
-  if (b) b.classList.toggle('on', !!on);
-  store.set(PREF_KEY, { ...store.get(PREF_KEY, {}), delta: !!on });
-}
-// 그림을 그리는 칸(맨 위 캔들 칸)의 높이 — 델타 칸이 있으면 그만큼 작다
+function setBars(arr) { series.setData(arr); }
+function updBar(b) { series.update(b); }
+// 그림을 그리는 칸(캔들 칸)의 높이
 const mainPaneH = () => chart.panes()[0].getHeight();
 
 // ───────────────────────── 봉 데이터 상태 (봉 간격별로 메모리에 둔다)
@@ -606,7 +572,6 @@ function updateLegend() {
     `<span>L <b class="${cls}">${fmtPrice(bar.low)}</b></span>` +
     `<span>C <b class="${cls}">${fmtPrice(bar.close)}</b></span>` +
     `<span class="${cls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>` +
-    (deltaSeries && barDelta(bar) != null ? `<span>Δ <b class="${barDelta(bar) >= 0 ? 'u' : 'd'}">${fmtDelta(barDelta(bar))}</b></span>` : '') +
     (S.busy ? '<span class="busy">불러오는 중…</span>' : '');
 }
 
@@ -1830,7 +1795,6 @@ document.addEventListener('keydown', e => {
   if (map[k]) setTool(tool === map[k] ? null : map[k]);
   else if (k === 'g') $('gotoBtn').click();
   else if (k === 'c') capture.shoot();
-  else if (k === 'x') $('deltaBtn').click();
   else if (k === 'i') $('interestBtn').click();
   else if (k === 'l') $('latestBtn').click();
   else if (k === '1') switchInterval('5m');
@@ -2453,14 +2417,12 @@ const capture = (() => {
   const canShareFiles = f => { try { return !!(navigator.canShare && navigator.canShare({ files: [f] })); } catch { return false; } };
   const isTouch = matchMedia('(pointer: coarse)').matches;
 
-  // 버튼은 캔들 칸 왼쪽 아래(오래된 봉 쪽)에 둔다 — 오른쪽 아래는 최신 봉·델타를 가린다
+  // 버튼을 가격축·시간축 바로 안쪽(오른쪽 아래)에 둔다
   function place() {
-    const b = $('capBtn'), d = $('deltaBtn');
-    const below = $('chart').clientHeight - mainPaneH(); // 시간축 + 델타 칸
-    b.style.right = d.style.right = 'auto';
-    b.style.left = '8px';
-    d.style.left = '50px';
-    b.style.bottom = d.style.bottom = (below + 8) + 'px';
+    const b = $('capBtn');
+    b.style.left = 'auto';
+    b.style.right = (chart.priceScale('right').width() + 8) + 'px';
+    b.style.bottom = (ts.height() + 8) + 'px';
   }
 
   // 차트(그림 포함) + 위쪽 정보 띠를 한 장으로. 폭이 좁으면 정보 띠를 두 줄로
@@ -2559,11 +2521,9 @@ const capture = (() => {
 })();
 
 // 델타 스위치
-$('deltaBtn').addEventListener('click', () => { setDelta(!deltaSeries); updateLegend(); requestAnimationFrame(() => setTimeout(capture.place, 0)); });
 
 // ───────────────────────── 시작
 const prefs = store.get(PREF_KEY, {});
-if (prefs.delta) setDelta(true);
 wantWide = !!prefs.wide;
 wide.apply(wantWide);
 S.iv = IVS[prefs.iv] ? prefs.iv : '5m';
@@ -2574,5 +2534,5 @@ connectWs();
 sync.syncNow();
 
 // 디버그·테스트용
-window.__psych = { calcPos, posPrefs, S, chart, series, drawings, bookmarks, sync, notes, jumpTo, switchInterval, wide, setDelta, getDelta: () => deltaSeries };
+window.__psych = { calcPos, posPrefs, S, chart, series, drawings, bookmarks, sync, notes, jumpTo, switchInterval, wide };
 })();
