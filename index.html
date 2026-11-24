@@ -186,6 +186,13 @@
   .cap-btn:hover { color:var(--text); border-color:var(--neutral); }
   .delta-btn { font-family:var(--display); font-size:16px; font-weight:700; }
   .delta-btn.on { color:var(--bg); background:var(--btc); border-color:var(--btc); }
+  .help-btn { top:36px; bottom:auto; font-family:var(--display); font-size:16px; font-weight:700; color:#42a5f5; border-color:#42a5f5; }
+  .help-btn[hidden] { display:none; }
+  .ih-tbl { width:100%; border-collapse:collapse; font-size:12.5px; margin:6px 0 12px; }
+  .ih-tbl td { border-top:1px solid var(--border2); padding:6px 4px; vertical-align:top; line-height:1.5; }
+  .ih-tbl td:first-child { white-space:nowrap; font-weight:700; padding-right:10px; }
+  .ih-b { color:#42a5f5; font-weight:700; } .ih-o { color:#ffa726; font-weight:700; }
+  .ih-list { font-size:12.5px; line-height:1.7; padding-left:18px; margin-bottom:10px; }
   .cap-btn svg { width:18px; height:18px; }
   .cap-img { display:block; width:100%; max-height:45vh; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:var(--bg); }
   html.wide .cap-img { max-height:calc(var(--vw) * 0.45); }
@@ -331,6 +338,8 @@
   /* ── 내 기록 (af WC) */
   #tradesBtn.on { border-color:#26e0a5; color:#26e0a5; background:rgba(38,224,165,0.08); }
   #notesBtn.on { border-color:var(--accel); color:var(--accel); background:rgba(51,212,255,0.08); }
+  #interestBtn.on { border-color:#42a5f5; color:#42a5f5; background:rgba(66,165,245,0.08); }
+  #interestBtn.busy { opacity:0.55; }
   #notesCount { font-family:var(--mono); font-size:11px; }
   #notesCount:empty { display:none; }
   .clock {
@@ -389,6 +398,7 @@
   .lock-row { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-dim); margin-top:10px; }
   /* 폰: 「내 기록」 버튼이 하나 늘어난 만큼 로고·개수를 빼서 상단 한 줄에 맞춘다 (가격이 곧 BTC) */
   @media (max-width: 720px) { html:not(.wide) .logo { display:none; } #notesCount { display:none; } .top .btn { padding:6px 4px; } html:not(.wide) .top { gap:3px; padding:6px 6px; } html:not(.wide) .seg { flex:none; } html:not(.wide) .seg button { padding:6px 5px; } }
+  @media (max-width: 400px) { html:not(.wide) .top .btn { padding:6px 2px; } html:not(.wide) .top { gap:2px; } } /* V 버튼이 늘어 폰 375px에 맞춘다 */
   @media (max-width: 720px) { .clock { font-size:9px; } .clock b { font-size:9px; } .clock span { font-size:8.5px; } }
 </style>
 </head>
@@ -412,6 +422,8 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/></svg><span class="lbl">MY</span><span id="notesCount"></span></button>
     <button class="btn" id="tradesBtn" title="T — 비트겟 매매(진입·청산) 보이기/숨기기">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20V9"/><path d="M3.5 12.5 7 9l3.5 3.5"/><path d="M17 4v11"/><path d="M13.5 11.5 17 15l3.5-3.5"/></svg><span class="lbl">T</span></button>
+    <button class="btn" id="interestBtn" title="V — 관심도: 화면 오른쪽 끝부터 7일, 거래량 5배 이상 봉 (I) · 켤 때 계산">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="6"/><line x1="15" y1="20" x2="15" y2="11"/><line x1="20" y1="20" x2="20" y2="16"/></svg><span class="lbl">V</span></button>
     <button class="btn" id="gotoBtn" title="북마크 · 날짜 이동 (G)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg><span class="lbl">날짜</span></button>
     <button class="btn" id="latestBtn" title="최신으로 (L)">
@@ -458,11 +470,46 @@
     </div>
     <div class="toast" id="toast"></div>
     <div class="clock" id="clock"></div>
+    <button class="cap-btn help-btn" id="interestHelpBtn" title="관심도 V 읽는 법" aria-label="관심도 읽는 법" hidden>?</button>
     <button class="cap-btn delta-btn" id="deltaBtn" title="델타 켜기/끄기 (X) — 봉마다 시장가 매수 − 시장가 매도" aria-label="델타 표시">Δ</button>
     <button class="cap-btn" id="capBtn" title="차트 캡처 (C)" aria-label="차트 캡처">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
     </button>
   </main>
+</div>
+
+<!-- 관심도 V 읽는 법 -->
+<div class="backdrop" id="interestHelp">
+  <div class="panel">
+    <h3>관심도 V 읽는 법</h3>
+    <p class="sub">거래량 = 시장의 관심도. 화면 <b>오른쪽 끝 봉부터 뒤로 7일</b>, 5분봉 거래량이 그 7일 평소(가운데 값)의 <b>5배 이상</b>인 봉을 모두 표시합니다. 매매 신호가 아니라 분석을 시작할 자리 찾기용입니다.</p>
+    <table class="ih-tbl">
+      <tr><td>숫자</td><td>평소의 몇 배인가 — ⑤ = 5배 · ⑫ = 12배 · ㊳ = 38배. 클수록 관심이 몰린 봉</td></tr>
+      <tr><td>위치</td><td>양봉이면 캔들 <b>밑</b>, 음봉이면 캔들 <b>위</b></td></tr>
+      <tr><td>색 (델타)</td><td><span class="ih-b">파랑</span> = 시장가 매수가 더 많음 · <span class="ih-o">주황</span> = 시장가 매도가 더 많음</td></tr>
+    </table>
+    <h3>모양으로 읽기</h3>
+    <table class="ih-tbl">
+      <tr><td>양봉 밑 <span class="ih-b">파랑</span></td><td>사서 올렸다 (같은 방향)</td></tr>
+      <tr><td>음봉 위 <span class="ih-o">주황</span></td><td>팔아서 내렸다 (같은 방향)</td></tr>
+      <tr><td>음봉 위 <span class="ih-b">파랑</span></td><td><b>사면서 올리려 했는데 내려갔다</b> — 위에서 막힘 · 흡수. 넘어야 할 자리 앞이면 돌파 실패의 강한 흔적</td></tr>
+      <tr><td>양봉 밑 <span class="ih-o">주황</span></td><td><b>팔았는데 올라갔다</b> — 아래에서 받침</td></tr>
+    </table>
+    <h3>순서</h3>
+    <ul class="ih-list">
+      <li>큰 숫자 · 색이 어긋난 숫자부터 — 돈이 가장 많이 들어간 자리의 <b>전후</b>를 뜯는다 (나인구: 분석의 시작점은 돌파 실패)</li>
+      <li>자리를 먼저 정하고, 거기서 거래량이 따라붙었는지 본다 — 숫자만으로 방향을 정하지 않는다</li>
+      <li>내가 그은 선 근처에 숫자가 몰렸는지 본다 → 핵심 자리로 프레임을 압축</li>
+    </ul>
+    <h3>쓰는 법</h3>
+    <ul class="ih-list">
+      <li>계산은 <b>켤 때 한 번</b>. 새로 보려면 껐다 켠다</li>
+      <li>과거를 보려면 그 시점으로 화면을 옮겨 놓고 켠다 (오른쪽 끝 봉 기준 7일)</li>
+      <li>5분봉에서 가장 잘 보인다 — 1시간봉에서는 한 봉 안에 숫자가 겹친다</li>
+      <li>바이낸스 현물 5분봉 · 진행 중인 봉은 뺀다 · 그림 저장(Gist)에는 들어가지 않는다</li>
+    </ul>
+    <div class="row end"><button class="btn" data-close>닫기</button></div>
+  </div>
 </div>
 
 <!-- 날짜 이동 -->

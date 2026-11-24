@@ -1831,6 +1831,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'g') $('gotoBtn').click();
   else if (k === 'c') capture.shoot();
   else if (k === 'x') $('deltaBtn').click();
+  else if (k === 'i') $('interestBtn').click();
   else if (k === 'l') $('latestBtn').click();
   else if (k === '1') switchInterval('5m');
   else if (k === '2') switchInterval('15m');
@@ -2327,6 +2328,107 @@ const notes = (() => {
   setBtn();
   if (on || tron) ensure();
   return { tap, toggle, toggleTr, refresh: () => requestUpdate(), list: () => list.slice() };
+})();
+
+// ───────────────────────── 관심도 V (2026-11-24 브루스와 정함)
+// 「거래량은 시장의 관심도」 — 화면 오른쪽 끝 봉부터 뒤로 7일, 5분봉 거래량이 그 7일 가운데 값의 5배 이상인 봉을 모두 표시.
+// 숫자 = 평소(가운데 값)의 몇 배 (⑤ ⑫ ㊶ …) · 위치 = 양봉 밑 / 음봉 위 · 색 = 델타 (파랑 시장가 매수 우위 · 주황 매도 우위)
+// 계산은 켤 때 한 번만 (껐다 켜면 그때 화면 기준으로 다시). 차트에만 보이고 그림 저장(Gist)에는 넣지 않는다.
+const interest = (() => {
+  const DAYS = 7, MULT = 5, STEP5 = 300;
+  const BLUE = '#42a5f5', ORANGE = '#ffa726';
+  let on = false, busy = false, marks = [], requestUpdate = () => {};
+
+  function circled(n) {
+    if (n >= 1 && n <= 20) return String.fromCodePoint(0x2460 + n - 1);
+    if (n >= 21 && n <= 35) return String.fromCodePoint(0x3251 + n - 21);
+    if (n >= 36 && n <= 50) return String.fromCodePoint(0x32B1 + n - 36);
+    return `${n}×`;
+  }
+  function setBtn() {
+    const b = $('interestBtn'); if (!b) return;
+    b.classList.toggle('on', on);
+    b.classList.toggle('busy', busy);
+    const h = $('interestHelpBtn'); if (h) h.hidden = !on;
+  }
+  // 기준 시점(ms) — 최신을 보고 있으면 지금, 아니면 화면 오른쪽 끝 봉의 끝
+  function anchorMs() {
+    const r = ts.getVisibleLogicalRange();
+    const nowMs = Date.now();
+    if (!r || !S.bars.length) return nowMs;
+    if (S.atLatest && r.to >= S.bars.length - 3) return nowMs;
+    const i = Math.max(0, Math.min(S.bars.length - 1, Math.floor(r.to)));
+    return Math.min(nowMs, chartToMs(S.bars[i].time + sec()));
+  }
+  async function compute() {
+    const end = anchorMs(), start = end - DAYS * 86400e3, nowMs = Date.now();
+    let bars = [], t = start;
+    while (t < end) {
+      const page = await fetchKlines('5m', { startTime: t, endTime: end - 1, limit: PAGE });
+      if (!page.length) break;
+      bars = bars.concat(page);
+      t = chartToMs(page[page.length - 1].time) + STEP5 * 1000;
+    }
+    bars = bars.filter(b => chartToMs(b.time) + STEP5 * 1000 <= nowMs && Number.isFinite(b.v)); // 진행 중인 봉은 뺀다
+    if (!bars.length) throw new Error('그 구간에 5분봉이 없습니다');
+    const vs = bars.map(b => b.v).sort((a, b) => a - b);
+    const m = vs.length >> 1, med = vs.length % 2 ? vs[m] : (vs[m - 1] + vs[m]) / 2;
+    const out = [];
+    for (const b of bars) {
+      if (!(med > 0) || b.v < MULT * med) continue;
+      const d = barDelta(b);
+      out.push({ time: b.time, high: b.high, low: b.low, up: b.close >= b.open, buy: d == null ? b.close >= b.open : d >= 0,
+                 x: Math.floor(b.v / med) });
+    }
+    return { marks: out, med, from: bars[0].time, to: bars[bars.length - 1].time };
+  }
+  async function toggle(want = !on) {
+    on = want;
+    if (!on) { marks = []; setBtn(); requestUpdate(); return; }
+    busy = true; setBtn();
+    try {
+      const r = await compute();
+      if (!on) return; // 계산 중에 껐다
+      marks = r.marks;
+      toast(`관심도 ${marks.length}개 — 평소(가운데 값) ${r.med.toFixed(0)}의 ${MULT}배 이상 · ${fmtChartTime(r.from, false)} ~ ${fmtChartTime(r.to, false)}`, { ms: 4500 });
+    } catch (e) {
+      on = false; marks = [];
+      toast('관심도를 계산하지 못했습니다', { error: true, detail: e.message });
+    } finally {
+      busy = false; setBtn(); requestUpdate();
+    }
+  }
+  function draw(ctx, w, h) {
+    if (!on || !marks.length || !S.bars.length) return;
+    const k = isPhone() ? 1.25 : 1, gap = 7 * k;
+    ctx.save();
+    ctx.font = `700 ${(14 * k).toFixed(1)}px 'IBM Plex Mono', Menlo, 'Apple SD Gothic Neo', sans-serif`;
+    ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+    for (const mk of marks) {
+      const x = timeToX(mk.time);
+      if (x == null || x < -10 || x > w + 10) continue;
+      const y0 = series.priceToCoordinate(mk.up ? mk.low : mk.high);
+      if (y0 == null) continue;
+      const y = mk.up ? y0 + gap : y0 - gap;
+      ctx.textBaseline = mk.up ? 'top' : 'bottom';
+      const t = circled(mk.x);
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(10,14,20,0.9)'; ctx.strokeText(t, x, y);
+      ctx.fillStyle = mk.buy ? BLUE : ORANGE; ctx.fillText(t, x, y);
+    }
+    ctx.restore();
+  }
+  series.attachPrimitive({
+    attached: p => { requestUpdate = p.requestUpdate; },
+    detached: () => { requestUpdate = () => {}; },
+    updateAllViews: () => {},
+    paneViews: () => [{ zOrder: () => 'top', renderer: () => ({
+      draw: target => target.useMediaCoordinateSpace(({ context, mediaSize }) => draw(context, mediaSize.width, mediaSize.height)),
+    }) }],
+  });
+  $('interestBtn').addEventListener('click', () => { if (!busy) toggle(); });
+  $('interestHelpBtn').addEventListener('click', () => openModal('interestHelp'));
+  setBtn();
+  return { toggle, isOn: () => on };
 })();
 
 // ───────────────────────── 지금 시각 (KST) — 캡쳐에 같이 찍히게 가격축·시간축이 만나는 오른쪽 아래 모서리에
