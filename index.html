@@ -184,8 +184,6 @@
     background:rgba(16,22,31,0.85); border:1px solid var(--border2); color:var(--text-dim);
   }
   .cap-btn:hover { color:var(--text); border-color:var(--neutral); }
-  .delta-btn { font-family:var(--display); font-size:16px; font-weight:700; }
-  .delta-btn.on { color:var(--bg); background:var(--btc); border-color:var(--btc); }
   .help-btn { top:36px; bottom:auto; font-family:var(--display); font-size:16px; font-weight:700; color:#42a5f5; border-color:#42a5f5; }
   .help-btn[hidden] { display:none; }
   .ih-tbl { width:100%; border-collapse:collapse; font-size:12.5px; margin:6px 0 12px; }
@@ -471,7 +469,6 @@
     <div class="toast" id="toast"></div>
     <div class="clock" id="clock"></div>
     <button class="cap-btn help-btn" id="interestHelpBtn" title="관심도 V 읽는 법" aria-label="관심도 읽는 법" hidden>?</button>
-    <button class="cap-btn delta-btn" id="deltaBtn" title="델타 켜기/끄기 (X) — 봉마다 시장가 매수 − 시장가 매도" aria-label="델타 표시">Δ</button>
     <button class="cap-btn" id="capBtn" title="차트 캡처 (C)" aria-label="차트 캡처">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
     </button>
@@ -679,6 +676,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- 고칠 때마다 v를 올린다: 배포 직후 브라우저가 옛 app.js를 쓰지 않도록 -->
-<script src="app.js?v=28"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>
