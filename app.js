@@ -479,6 +479,57 @@ function switchInterval(iv, { centerMs = null, width = null } = {}) {
   }
 }
 
+// ───────────────────────── 지금 봉 거래량 (2026-11-27 브루스) — 차트 오른쪽 위에 숫자로
+// 큰 숫자 = 지금 봉에 쌓인 거래량(BTC) · 색 = 그 봉의 시장가 매수/매도 우위 (관심도 V와 같은 파랑/주황)
+// 둘째 줄 = 평소(이 봉 간격 최근 1000봉의 가운데 값)의 몇 배 · 시장가 매수 비율 · 봉 마감까지 남은 시간
+// 봉이 막 시작했으면 숫자가 작다 — 남은 시간과 같이 읽는다.
+const volNow = (() => {
+  const el = $('volNow');
+  const base = {};             // 봉 간격 → { med, at }
+  let k = null;                // 웹소켓 마지막 봉 { t, v, tb, iv }
+  const fmtV = v => (v >= 1000 ? Math.round(v).toLocaleString('en-US') : v >= 100 ? v.toFixed(0) : v.toFixed(1));
+  async function loadBase(iv) {
+    const b = base[iv];
+    if (b && Date.now() - b.at < 30 * 60e3) return;
+    base[iv] = { med: b ? b.med : null, at: Date.now() };
+    try {
+      const nowMs = Date.now();
+      const bars = (await fetchKlines(iv)).filter(x => chartToMs(x.time) + IVS[iv] * 1000 <= nowMs && Number.isFinite(x.v));
+      const vs = bars.map(x => x.v).sort((a, c) => a - c), m = vs.length >> 1;
+      if (vs.length) base[iv].med = vs.length % 2 ? vs[m] : (vs[m - 1] + vs[m]) / 2;
+      render();
+    } catch { base[iv].at = 0; }
+  }
+  function place() {
+    try { el.style.right = (chart.priceScale('right').width() + 8) + 'px'; } catch {}
+  }
+  function render() {
+    place();
+    if (!k || k.iv !== S.iv) { el.innerHTML = '<b class="vn-v">—</b><span class="vn-s">거래량</span>'; el.className = 'vol-now'; return; }
+    const med = base[S.iv] && base[S.iv].med;
+    const x = med > 0 ? k.v / med : null;
+    const buy = k.v > 0 ? k.tb / k.v : null;
+    const left = Math.max(0, k.t + IVS[S.iv] * 1000 - Date.now()) / 1000;
+    const mm = Math.floor(left / 60), ss = Math.floor(left % 60);
+    const leftTxt = IVS[S.iv] >= 3600 ? `${mm}분` : `${mm}:${String(ss).padStart(2, '0')}`;
+    el.className = 'vol-now' + (buy == null ? '' : buy >= 0.5 ? ' buy' : ' sell') + (x != null && x >= 2 ? ' hot' : '');
+    el.innerHTML = `<b class="vn-v">${fmtV(k.v)}</b>`
+      + `<span class="vn-s">${x == null ? '' : `<i class="vn-x">${x.toFixed(1)}배</i> · `}`
+      + `${buy == null ? '' : `매수 ${Math.round(buy * 100)}% · `}${leftTxt}</span>`;
+  }
+  return {
+    reset(iv) { k = null; render(); loadBase(iv); },
+    onLive(m) { k = { t: m.t, v: +m.v, tb: +m.V, iv: m.i }; render(); },
+    tick() { if (k) render(); else place(); if (document.visibilityState === 'visible') loadBase(S.iv); },
+    caption() { // 캡처 띠에 넣을 한 줄
+      if (!k || k.iv !== S.iv) return '';
+      const med = base[S.iv] && base[S.iv].med;
+      return ` · 지금 봉 거래량 ${fmtV(k.v)}${med > 0 ? ` (평소 ${(k.v / med).toFixed(1)}배)` : ''}`;
+    },
+  };
+})();
+setInterval(() => volNow.tick(), 1000);
+
 // ───────────────────────── 실시간 (웹소켓)
 const WSs = { ws: null, idx: 0, retry: 0, timer: 0, gotMsg: false };
 
@@ -492,6 +543,7 @@ function connectWs() {
   if (WSs.ws) { WSs.ws.onclose = null; WSs.ws.onerror = null; try { WSs.ws.close(); } catch {} }
   const iv = S.iv;
   const url = `${WS_BASES[WSs.idx % WS_BASES.length]}${SYMBOL.toLowerCase()}@kline_${iv}`;
+  volNow.reset(iv);
   setConn('wait');
   let ws;
   try { ws = new WebSocket(url); } catch { scheduleReconnect(); return; }
@@ -501,6 +553,7 @@ function connectWs() {
     WSs.gotMsg = true;
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     const k = m.k; if (!k || k.i !== S.iv) return;
+    volNow.onLive(k);
     onLiveBar({ time: msToChart(k.t), open: +k.o, high: +k.h, low: +k.l, close: +k.c, v: +k.v, tb: +k.V });
   };
   ws.onerror = () => {};
@@ -2433,7 +2486,7 @@ const capture = (() => {
     const last = S.bars[S.bars.length - 1];
     const now = msToChart(Date.now());
     const title = 'BTC/USDT';
-    const mid = `${IV_NAME[S.iv]} · 바이낸스 현물${last && S.atLatest ? ' · ' + fmtPrice(last.close) : ''}`;
+    const mid = `${IV_NAME[S.iv]} · 바이낸스 현물${last && S.atLatest ? ' · ' + fmtPrice(last.close) + volNow.caption() : ''}`;
     const when = `${fmtChartTime(now)} KST`;
     const fTitle = `700 ${Math.round(14 * scale)}px 'IBM Plex Mono', Menlo, monospace`;
     const fText = `500 ${Math.round(12 * scale)}px 'IBM Plex Mono', Menlo, monospace`;
