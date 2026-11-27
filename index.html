@@ -130,7 +130,7 @@
   .legend {
     position:absolute; top:8px; left:10px; z-index:3; pointer-events:none;
     font-family:var(--mono); font-size:12px; font-weight:500; color:var(--text-dim);
-    display:flex; flex-wrap:wrap; gap:4px 12px; max-width:calc(100% - 90px);
+    display:flex; flex-wrap:wrap; gap:4px 12px; max-width:calc(100% - 200px);
   }
   .legend .t { color:var(--text); }
   .legend b { font-weight:600; }
@@ -184,7 +184,7 @@
     background:rgba(16,22,31,0.85); border:1px solid var(--border2); color:var(--text-dim);
   }
   .cap-btn:hover { color:var(--text); border-color:var(--neutral); }
-  .help-btn { top:36px; bottom:auto; font-family:var(--display); font-size:16px; font-weight:700; color:#42a5f5; border-color:#42a5f5; }
+  .help-btn { top:64px; bottom:auto; font-family:var(--display); font-size:16px; font-weight:700; color:#42a5f5; border-color:#42a5f5; }
   .help-btn[hidden] { display:none; }
   .ih-tbl { width:100%; border-collapse:collapse; font-size:12.5px; margin:6px 0 12px; }
   .ih-tbl td { border-top:1px solid var(--border2); padding:6px 4px; vertical-align:top; line-height:1.5; }
@@ -340,6 +340,19 @@
   #interestBtn.busy { opacity:0.55; }
   #notesCount { font-family:var(--mono); font-size:11px; }
   #notesCount:empty { display:none; }
+  .vol-now {
+    position:absolute; top:8px; right:70px; z-index:3; pointer-events:none;
+    display:flex; flex-direction:column; align-items:flex-end; gap:1px;
+    padding:4px 8px; border-radius:8px; background:rgba(16,22,31,0.78); border:1px solid var(--border);
+    font-family:var(--mono); line-height:1.15; color:var(--text);
+  }
+  .vol-now .vn-v { font-size:22px; font-weight:700; letter-spacing:0.5px; }
+  .vol-now .vn-s { font-size:11px; color:var(--text-dim); white-space:nowrap; }
+  .vol-now .vn-x { font-style:normal; }
+  .vol-now.buy .vn-v { color:#42a5f5; }
+  .vol-now.sell .vn-v { color:#ffa726; }
+  .vol-now.hot { border-color:var(--btc); }
+  .vol-now.hot .vn-x { color:var(--btc); font-weight:700; }
   .clock {
     position:absolute; right:0; bottom:0; z-index:3; pointer-events:none;
     width:56px; height:28px; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -468,6 +481,7 @@
     </div>
     <div class="toast" id="toast"></div>
     <div class="clock" id="clock"></div>
+    <div class="vol-now" id="volNow"></div>
     <button class="cap-btn help-btn" id="interestHelpBtn" title="관심도 V 읽는 법" aria-label="관심도 읽는 법" hidden>?</button>
     <button class="cap-btn" id="capBtn" title="차트 캡처 (C)" aria-label="차트 캡처">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
@@ -676,6 +690,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- 고칠 때마다 v를 올린다: 배포 직후 브라우저가 옛 app.js를 쓰지 않도록 -->
-<script src="app.js?v=29"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>
