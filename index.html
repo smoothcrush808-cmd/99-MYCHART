@@ -343,16 +343,13 @@
   .vol-now {
     position:absolute; top:8px; right:70px; z-index:3; pointer-events:none;
     display:flex; flex-direction:column; align-items:flex-end; gap:1px;
-    padding:4px 8px; border-radius:8px; background:rgba(16,22,31,0.78); border:1px solid var(--border);
+    padding:3px 7px; border-radius:7px; background:rgba(16,22,31,0.78); border:1px solid var(--border);
     font-family:var(--mono); line-height:1.15; color:var(--text);
   }
-  .vol-now .vn-v { font-size:22px; font-weight:700; letter-spacing:0.5px; }
-  .vol-now .vn-s { font-size:11px; color:var(--text-dim); white-space:nowrap; }
-  .vol-now .vn-x { font-style:normal; }
+  .vol-now .vn-v { font-size:15px; font-weight:700; letter-spacing:0.5px; }
+  .vol-now .vn-s { font-size:9px; color:var(--text-dim); white-space:nowrap; }
   .vol-now.buy .vn-v { color:#42a5f5; }
   .vol-now.sell .vn-v { color:#ffa726; }
-  .vol-now.hot { border-color:var(--btc); }
-  .vol-now.hot .vn-x { color:var(--btc); font-weight:700; }
   .clock {
     position:absolute; right:0; bottom:0; z-index:3; pointer-events:none;
     width:56px; height:28px; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -690,6 +687,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- 고칠 때마다 v를 올린다: 배포 직후 브라우저가 옛 app.js를 쓰지 않도록 -->
-<script src="app.js?v=30"></script>
+<script src="app.js?v=32"></script>
 </body>
 </html>
